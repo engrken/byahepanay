@@ -73,6 +73,10 @@ Pushes to `main` trigger a Vercel production deployment. Vercel injects the Neon
 
 The app refreshes the Neon-backed board every 10 seconds while the page is visible and when the user returns to the tab. Offline roadside sightings remain in IndexedDB and are retried when connectivity returns. Neon Realtime is not enabled in this database at the moment.
 
+## Stop-first bus arrivals
+
+Choose a corridor, then use **Use my location** or select a waiting stop. The app compares active trips that pass that stop and puts the bus with the earliest estimated arrival first. Buses that have already passed the stop or have only an unverified report there are excluded from the incoming list. Browser location is used locally to select the nearest mapped stop; it is not sent to the server unless the rider separately submits a sighting. Because checkpoint coordinates are still prototype estimates, the displayed nearest stop and ETAs must be field-validated before public operational use.
+
 ## Field and release validation
 
 - Check every checkpoint's exact highway-side GPS coordinate before enabling the 300 m geofence for commuters. Seed coordinates are approximate municipal/area anchors only.

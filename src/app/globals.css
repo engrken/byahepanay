@@ -135,6 +135,37 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .beacon-status-grid button:active { background: #173321; }
 .beacon-stop { min-height: 45px; border: 1px solid #702c2f; border-radius: 11px; background: #281011; color: #ffbabc; font-weight: 850; }
 
+/* Stop-first arrival ranking */
+.arrival-card { margin-top: 13px; padding: 14px; }
+.arrival-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.arrival-kicker { color: var(--red); font-size: 9px; font-weight: 900; letter-spacing: .14em; }
+.arrival-card-head h2 { margin: 3px 0 3px; color: #21343e; font-size: 17px; line-height: 1.15; letter-spacing: -.035em; }
+.arrival-card-head p { margin: 0; color: #78858b; font-size: 10px; line-height: 1.45; }
+.location-button { flex: 0 0 auto; min-height: 36px; padding: 7px 10px; font-size: 10px; }
+.arrival-stop-field { display: grid; grid-template-columns: minmax(0,1fr); gap: 5px; margin-top: 13px; }
+.arrival-stop-field label { color: #77858c; font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.arrival-stop-field select { width: 100%; min-height: 39px; padding: 8px 10px; border: 1px solid #dce3e4; border-radius: 10px; background: white; color: #263740; font-size: 12px; }
+.arrival-location-meta { margin-top: 7px; color: #849097; font-size: 9px; line-height: 1.45; }
+.arrival-location-meta strong { color: #43565f; }
+.arrival-results { margin-top: 13px; }
+.arrival-results-title { margin-bottom: 6px; color: #64737b; font-size: 9px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+.arrival-list { border-top: 1px solid #edf0f0; }
+.arrival-row { display: grid; grid-template-columns: 42px minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid #edf0f0; }
+.arrival-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.arrival-number { display: grid; place-items: center; min-height: 28px; border-radius: 8px; background: #edf1f2; color: #62717a; font-size: 9px; font-weight: 900; }
+.arrival-row:first-child .arrival-number { background: #fbecee; color: var(--red-dark); }
+.arrival-description { display: grid; gap: 2px; min-width: 0; }
+.arrival-description strong { color: #273a44; font-size: 11px; }
+.arrival-description span { overflow: hidden; color: #839097; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.arrival-eta { min-width: 66px; text-align: right; }
+.arrival-eta strong { display: block; color: var(--red-dark); font-size: 17px; line-height: 1.05; letter-spacing: -.035em; }
+.arrival-eta span { color: #849097; font-size: 9px; }
+.arrival-empty { padding: 14px 7px 4px; }
+@media (max-width: 390px) {
+  .arrival-card-head { align-items: stretch; flex-direction: column; }
+  .location-button { align-self: flex-start; }
+}
+
 @media (min-width: 640px) {
   .topbar { padding: 23px 22px 28px; }
   .page-content { padding-right: 20px; padding-left: 20px; }

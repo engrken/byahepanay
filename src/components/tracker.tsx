@@ -72,6 +72,9 @@ export default function Tracker() {
   const [riderMode, setRiderMode] = useState(false);
   const [lastBeaconAt, setLastBeaconAt] = useState<string | null>(null);
   const [wakeLockActive, setWakeLockActive] = useState(false);
+  const [riderLocation, setRiderLocation] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const lastBeaconCheckpointRef = useRef<string | null>(null);
 
@@ -133,22 +136,63 @@ export default function Tracker() {
   }, [refreshBoard]);
 
   const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia), [tab, kaliboVia]);
+  const selectedBoardRoute = useMemo(
+    () => board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute,
+    [board.routes, selectedRoute],
+  );
   const relatedTrips = useMemo(() => board.trips
     .filter((trip) => (routeMatchesTab(trip.route_id, tab) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
     .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab]);
-  const activeTrip: Trip | null = relatedTrips[0] ?? null;
+
+  // Use the rider's browser location to find the nearest mapped stop on the selected corridor.
+  // The coordinates stay on this device unless the rider separately submits a bus sighting.
+  const nearestUserStop = useMemo(
+    () => riderLocation ? nearestCheckpoint(riderLocation, selectedBoardRoute.checkpoints) : null,
+    [riderLocation, selectedBoardRoute],
+  );
+  const targetStop = useMemo(() => {
+    if (waitStopId) {
+      const manualStop = board.routes.flatMap((route) => route.checkpoints).find((point) => point.id === waitStopId);
+      if (manualStop) return manualStop;
+    }
+    return nearestUserStop?.checkpoint ?? null;
+  }, [board.routes, nearestUserStop, waitStopId]);
+
+  // Rank every active trip that actually passes the rider's selected stop.
+  // A bus that has already passed the stop, or only has an unverified report there, is not ranked as incoming.
+  const rankedArrivals = useMemo(() => {
+    if (!targetStop) return [];
+    return relatedTrips.map((trip) => {
+      if (trip.status !== 'active') return null;
+      const routeId = !trip.route_locked && trip.route_candidate ? trip.route_candidate : trip.route_id;
+      const route = board.routes.find((candidate) => candidate.id === routeId);
+      if (!route) return null;
+      const tripTimeline = estimateTimeline(trip, route.checkpoints, clock);
+      const stopItem = tripTimeline.items.find((item) => item.checkpoint.id === targetStop.id);
+      if (!stopItem || stopItem.state === 'passed' || stopItem.state === 'pending' || !stopItem.eta || stopItem.minutesAway === null) {
+        return null;
+      }
+      return { trip, route, eta: stopItem.eta, minutesAway: stopItem.minutesAway };
+    }).filter((arrival): arrival is { trip: Trip; route: RouteDefinition; eta: Date; minutesAway: number } => arrival !== null)
+      .sort((a, b) => a.eta.getTime() - b.eta.getTime());
+  }, [relatedTrips, targetStop, board.routes, clock]);
+
+  // The earliest estimated arrival becomes the primary bus shown in the tracker.
+  const activeTrip: Trip | null = rankedArrivals[0]?.trip ?? relatedTrips[0] ?? null;
   const activeRoute: RouteDefinition = useMemo(() => {
     if (activeTrip) {
-      const displayRouteId = tab === 'kalibo' && activeTrip.route_candidate === 'kalibo_mambusao'
-        ? 'kalibo_mambusao' : activeTrip.route_id;
-      return board.routes.find((route) => route.id === displayRouteId) ?? selectedRoute;
+      const displayRouteId = !activeTrip.route_locked && activeTrip.route_candidate
+        ? activeTrip.route_candidate : activeTrip.route_id;
+      return board.routes.find((route) => route.id === displayRouteId) ?? selectedBoardRoute;
     }
-    return board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute;
-  }, [activeTrip, board.routes, selectedRoute, tab]);
+    return selectedBoardRoute;
+  }, [activeTrip, board.routes, selectedBoardRoute]);
   const timeline = useMemo(() => activeTrip
     ? estimateTimeline(activeTrip, activeRoute.checkpoints, clock)
     : null, [activeTrip, activeRoute, clock]);
-  const waitItem = timeline?.items.find((item) => item.checkpoint.id === waitStopId) ?? null;
+  const waitItem = targetStop
+    ? timeline?.items.find((item) => item.checkpoint.id === targetStop.id) ?? null
+    : null;
   const cadence = activeTrip ? projectCadence(activeTrip.departure_at, activeTrip.bus_type, 3) : [];
 
   const submitSighting = useCallback(async (payload: Omit<QueuedSighting, 'queuedAt'>) => {
@@ -181,6 +225,33 @@ export default function Tracker() {
       }
     }
   }, [refreshBoard]);
+
+  const findMyStop = () => {
+    if (!navigator.geolocation) {
+      setLocationError('Location is not available in this browser. Choose your stop from the list instead.');
+      return;
+    }
+    setLocationBusy(true);
+    setLocationError(null);
+    setWaitStopId(null);
+    navigator.geolocation.getCurrentPosition((position) => {
+      setRiderLocation({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+      });
+      setLocationBusy(false);
+    }, (error) => {
+      setLocationBusy(false);
+      setLocationError(
+        error.code === error.PERMISSION_DENIED
+          ? 'Location permission was denied. Allow location access or choose your stop manually.'
+          : error.code === error.TIMEOUT
+            ? 'Location lookup timed out. Try again outdoors or select your stop manually.'
+            : 'Could not read your location. Choose your stop manually.',
+      );
+    }, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 });
+  };
 
   const recordDeparture = async () => {
     if (!navigator.geolocation) {
@@ -411,12 +482,67 @@ export default function Tracker() {
           </div>}
         </section>
 
+        <section className="card arrival-card" aria-label="Next buses near your stop">
+          <div className="arrival-card-head">
+            <div>
+              <div className="arrival-kicker">RIDER PRIORITY</div>
+              <h2>Next bus near you</h2>
+              <p>We rank active buses by their estimated arrival at your stop.</p>
+            </div>
+            <button className="secondary-button location-button" type="button" onClick={findMyStop} disabled={locationBusy}>
+              {locationBusy ? 'Locating…' : riderLocation ? 'Refresh location' : 'Use my location'}
+            </button>
+          </div>
+          <div className="arrival-stop-field">
+            <label htmlFor="arrival-stop">Your waiting stop</label>
+            <select
+              id="arrival-stop"
+              value={selectedBoardRoute.checkpoints.some((point) => point.id === targetStop?.id) ? targetStop?.id ?? '' : ''}
+              onChange={(event) => setWaitStopId(event.target.value || null)}
+            >
+              <option value="">Choose a stop on {selectedBoardRoute.short_name}</option>
+              {selectedBoardRoute.checkpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
+            </select>
+          </div>
+          <div className="arrival-location-meta">
+            {riderLocation && nearestUserStop
+              ? <>Nearest mapped stop: <strong>{nearestUserStop.checkpoint.name}</strong> · approx. {formatDistance(nearestUserStop.distanceMeters)} away · GPS accuracy ±{formatDistance(riderLocation.accuracy)}</>
+              : 'Use your location or select a stop manually. Your location stays on this device.'}
+          </div>
+          {locationError && <div className="notice error">{locationError}</div>}
+          {targetStop ? <div className="arrival-results">
+            <div className="arrival-results-title">Buses approaching {targetStop.name}</div>
+            {rankedArrivals.length ? <div className="arrival-list">
+              {rankedArrivals.slice(0, 4).map((arrival, index) => (
+                <div className="arrival-row" key={arrival.trip.id}>
+                  <div className="arrival-number">{index === 0 ? 'NEXT' : index + 1}</div>
+                  <div className="arrival-description">
+                    <strong>{arrival.route.short_name}</strong>
+                    <span>{arrival.trip.bus_type === 'aircon' ? 'Aircon · Deluxe' : 'Regular · Ordinary'} · {arrival.trip.body_number ? 'Bus ' + arrival.trip.body_number : 'Bus not tagged'}</span>
+                    <span>{arrival.trip.confidence_status === 'verified' ? 'Community verified' : 'Awaiting stronger confirmation'}</span>
+                  </div>
+                  <div className="arrival-eta">
+                    <strong>{arrival.minutesAway <= 1 ? 'Arriving' : arrival.minutesAway + ' min'}</strong>
+                    <span>{formatTime(arrival.eta)}</span>
+                  </div>
+                </div>
+              ))}
+            </div> : <div className="empty-trip arrival-empty">
+              <strong>No active bus is currently estimated to reach this stop.</strong>
+              <p>Try another stop or check again after a departure or community sighting is reported.</p>
+            </div>}
+          </div> : <div className="empty-trip arrival-empty">
+            <strong>Find the bus that reaches you first.</strong>
+            <p>Share your location or choose your waiting stop to compare all active buses on this corridor.</p>
+          </div>}
+        </section>
+
         {TEST_MODE && <div className="notice" style={{ marginTop: 12 }}>🧪 Test mode is ON: the server skips the 300 m GPS geofence only. Speed, route, and consensus checks still apply.</div>}
         {!board.configured && <div className="notice info">Demo shell: connect Neon and apply <code>neon/schema.sql</code> to enable live trips and crowd reports.</div>}
         <ErrorNotice message={message} />
         {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}
 
-        <div className="section-label">{activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
+        <div className="section-label">{targetStop && rankedArrivals.length ? 'Next bus to ' + targetStop.name : activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
         <section className="card trip-card" aria-live="polite">
           {activeTrip ? <>
             <div className="trip-card-top">
