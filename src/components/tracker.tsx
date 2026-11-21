@@ -55,6 +55,9 @@ function ErrorNotice({ message }: { message: UiMessage }) {
 
 export default function Tracker() {
   const [board, setBoard] = useState<BoardData>(EMPTY_BOARD);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [themeReady, setThemeReady] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
   const [loading, setLoading] = useState(true);
   const [clock, setClock] = useState(() => new Date());
   const [tab, setTab] = useState<CorridorTab>('iloilo');
@@ -95,6 +98,42 @@ export default function Tracker() {
   useEffect(() => {
     const clockTimer = setInterval(() => setClock(new Date()), 30_000);
     return () => clearInterval(clockTimer);
+  }, []);
+
+  useEffect(() => {
+    let nextTheme: 'light' | 'dark' = 'light';
+    try {
+      const savedTheme = window.localStorage.getItem('byahepanay-theme');
+      nextTheme = savedTheme === 'light' || savedTheme === 'dark'
+        ? savedTheme
+        : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch {
+      nextTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.dataset.theme = nextTheme;
+    document.documentElement.style.colorScheme = nextTheme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', nextTheme === 'dark' ? '#101a22' : '#152b3a');
+    setTheme(nextTheme);
+    setThemeReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!themeReady) return;
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#101a22' : '#152b3a');
+    try { window.localStorage.setItem('byahepanay-theme', theme); } catch { /* Theme still applies for this page session. */ }
+  }, [theme, themeReady]);
+
+  useEffect(() => {
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    updateConnection();
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+    };
   }, []);
 
   useEffect(() => {
@@ -456,19 +495,39 @@ export default function Tracker() {
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to tracker</a>
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brandline">
             <div className="brand"><span className="brand-mark">🚌</span><span>ByahePanay</span></div>
-            <div className="eyebrow">Community trip tracker</div>
+            <div className="header-tools">
+              <div className="eyebrow">Community trip tracker</div>
+              <button
+                className="theme-toggle"
+                type="button"
+                onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+                aria-pressed={theme === 'dark'}
+                title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              >
+                <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
+                <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+              </button>
+            </div>
           </div>
           <h1 className="header-title">Catch the last trip.<br />Not the guesswork.</h1>
           <p className="header-subtitle">Crowd-verified Ceres Liner sightings across Capiz, Iloilo, and Aklan.</p>
-          <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
+          <div className="header-meta">
+            <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
+            <div className={`connection-pill ${isOnline ? 'connected' : 'disconnected'}`} role="status" aria-live="polite">
+              <span className="connection-dot" aria-hidden="true" />
+              {isOnline ? 'Connection available' : 'Offline · reports saved on this device'}
+            </div>
+          </div>
         </div>
       </header>
 
-      <div className="page-content">
+      <div className="page-content" id="main-content">
         <section className="corridor-wrap" aria-label="Choose travel corridor">
           <div className="corridor-tabs">
             <button className={`corridor-tab ${tab === 'iloilo' ? 'active' : ''}`} onClick={() => selectedTab('iloilo')}>Iloilo<br />(Passi)</button>
@@ -482,7 +541,13 @@ export default function Tracker() {
           </div>}
         </section>
 
-        <section className="card arrival-card" aria-label="Next buses near your stop">
+        <nav className="section-jump-nav" aria-label="Tracker sections">
+          <a href="#arrivals">Arrivals</a>
+          <a href="#active-trip">Current trip</a>
+          <a href="#checkpoint-timeline">Checkpoints</a>
+        </nav>
+
+        <section className="card arrival-card" id="arrivals" aria-label="Next buses near your stop">
           <div className="arrival-card-head">
             <div>
               <div className="arrival-kicker">RIDER PRIORITY</div>
@@ -543,7 +608,7 @@ export default function Tracker() {
         {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}
 
         <div className="section-label">{targetStop ? rankedArrivals.length ? 'Next bus to ' + targetStop.name : 'No bus currently approaching ' + targetStop.name : activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
-        <section className="card trip-card" aria-live="polite">
+        <section className="card trip-card" id="active-trip" aria-live="polite">
           {activeTrip ? <>
             <div className="trip-card-top">
               <div>
@@ -579,7 +644,7 @@ export default function Tracker() {
         </section>
 
         <div className="section-label">Checkpoint timeline</div>
-        <section className="card timeline-card">
+        <section className="card timeline-card" id="checkpoint-timeline">
           {(timeline?.items ?? activeRoute.checkpoints.map((checkpoint) => ({ checkpoint, state: 'upcoming' as const, eta: null, minutesAway: null }))).map((item) => {
             const stateText = item.state === 'passed' ? 'Passed' : item.state === 'pending' ? '1 report · awaiting confirmation' : item.state === 'approaching' ? 'Approaching' : 'Upcoming';
             const dotText = item.state === 'passed' ? '✓' : item.state === 'pending' ? '!' : item.state === 'approaching' ? '🚌' : '·';
@@ -614,11 +679,23 @@ export default function Tracker() {
         <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official Ceres Liner schedules. Coordinates must be field-checked before public operational use.</p>
       </div>
 
-      <nav className="bottom-bar" aria-label="Crowdsourcing actions">
+      <nav className="bottom-bar" aria-label="Quick reporting actions">
         <div className="bottom-actions">
-          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy}><span className="action-icon">🏁</span><span>Left Pueblo<br />Terminal</span></button>
-          <button className="action-button main" onClick={reportRoadside} disabled={busy}><span className="action-icon">👀</span><span>Bus Just Passed<br />Here</span></button>
-          <button className="action-button beacon" onClick={startRiderMode} disabled={busy}><span className="action-icon">🚌</span><span>I'm on This Bus<br />Rider Beacon</span></button>
+          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy} aria-label="Log a bus departure from Pueblo">
+            <span className="action-icon" aria-hidden="true">🏁</span>
+            <span className="action-label">Departure</span>
+            <span className="action-copy">Left Pueblo</span>
+          </button>
+          <button className="action-button main" onClick={reportRoadside} disabled={busy} aria-label="Report a bus that just passed this checkpoint">
+            <span className="action-icon" aria-hidden="true">👀</span>
+            <span className="action-label">Bus sighting</span>
+            <span className="action-copy">Passed here</span>
+          </button>
+          <button className="action-button beacon" onClick={startRiderMode} disabled={busy} aria-label="Start Rider Beacon mode">
+            <span className="action-icon" aria-hidden="true">🚌</span>
+            <span className="action-label">Rider Beacon</span>
+            <span className="action-copy">I’m on this bus</span>
+          </button>
         </div>
       </nav>
 

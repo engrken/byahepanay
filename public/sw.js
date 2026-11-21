@@ -1,5 +1,5 @@
 /* Small offline shell cache + best-effort background sync for queued GPS sightings. */
-const CACHE_NAME = 'byahepanay-shell-v1';
+const CACHE_NAME = 'byahepanay-shell-v2';
 const SHELL_URLS = ['/', '/manifest.json', '/icon.svg'];
 const DB_NAME = 'byahepanay-offline';
 const STORE_NAME = 'sightings';
