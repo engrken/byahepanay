@@ -538,11 +538,11 @@ export default function Tracker() {
         </section>
 
         {TEST_MODE && <div className="notice" style={{ marginTop: 12 }}>🧪 Test mode is ON: the server skips the 300 m GPS geofence only. Speed, route, and consensus checks still apply.</div>}
-        {!board.configured && <div className="notice info">Demo shell: connect Neon and apply <code>neon/schema.sql</code> to enable live trips and crowd reports.</div>}
+        {!loading && !board.configured && <div className="notice info">Demo shell: connect Neon and apply <code>neon/schema.sql</code> to enable live trips and crowd reports.</div>}
         <ErrorNotice message={message} />
         {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}
 
-        <div className="section-label">{targetStop && rankedArrivals.length ? 'Next bus to ' + targetStop.name : activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
+        <div className="section-label">{targetStop ? rankedArrivals.length ? 'Next bus to ' + targetStop.name : 'No bus currently approaching ' + targetStop.name : activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
         <section className="card trip-card" aria-live="polite">
           {activeTrip ? <>
             <div className="trip-card-top">
