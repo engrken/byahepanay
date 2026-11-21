@@ -1,0 +1,539 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { ROUTES, routeForTab } from '@/lib/corridors';
+import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
+import { nearestCheckpoint, formatDistance } from '@/lib/geo';
+import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
+import { getBrowserSupabase } from '@/lib/supabase';
+import type { BoardData, BusType, Checkpoint, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
+
+const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
+const TEST_MODE = process.env.NEXT_PUBLIC_TEST_MODE === 'true';
+
+type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;
+
+let ephemeralSpotterId: string | null = null;
+
+function getSpotterId() {
+  if (typeof window === 'undefined') return '';
+  const key = 'byahepanay-spotter-id';
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored) return stored;
+  } catch { /* Private browsing may deny storage; retain a page-session identifier below. */ }
+  if (!ephemeralSpotterId) {
+    ephemeralSpotterId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+        const random = Math.random() * 16 | 0;
+        return (character === 'x' ? random : (random & 0x3 | 0x8)).toString(16);
+      });
+  }
+  try { window.localStorage.setItem(key, ephemeralSpotterId); } catch { /* Keep the identifier in memory for this page session. */ }
+  return ephemeralSpotterId;
+}
+
+function routeMatchesTab(routeId: string, tab: CorridorTab) {
+  if (tab === 'kalibo') return routeId === 'kalibo_mambusao' || routeId === 'kalibo_sapian';
+  if (tab === 'iloilo') return routeId === 'iloilo_passi';
+  return routeId === tab;
+}
+
+function ConfidenceBadge({ value }: { value: 'scheduled' | 'unverified' | 'verified' }) {
+  const labels = {
+    verified: ['🟢', 'Verified'],
+    unverified: ['🟡', 'Unverified'],
+    scheduled: ['⚪', 'Scheduled · Unconfirmed'],
+  } as const;
+  return <span className={`confidence ${value}`}><span>{labels[value][0]}</span>{labels[value][1]}</span>;
+}
+
+function ErrorNotice({ message }: { message: UiMessage }) {
+  if (!message) return null;
+  return <div role="status" className={`notice ${message.kind === 'error' ? 'error' : message.kind === 'success' ? 'success' : message.kind === 'info' ? 'info' : ''}`}>{message.text}</div>;
+}
+
+export default function Tracker() {
+  const [board, setBoard] = useState<BoardData>(EMPTY_BOARD);
+  const [loading, setLoading] = useState(true);
+  const [clock, setClock] = useState(() => new Date());
+  const [tab, setTab] = useState<CorridorTab>('iloilo');
+  const [kaliboVia, setKaliboVia] = useState<'mambusao' | 'sapian'>('mambusao');
+  const [waitStopId, setWaitStopId] = useState<string | null>(null);
+  const [message, setMessage] = useState<UiMessage>(null);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [departureOpen, setDepartureOpen] = useState(false);
+  const [departureType, setDepartureType] = useState<BusType>('aircon');
+  const [departureBody, setDepartureBody] = useState('');
+  const [departurePlate, setDeparturePlate] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [tagBody, setTagBody] = useState('');
+  const [tagPlate, setTagPlate] = useState('');
+  const [riderMode, setRiderMode] = useState(false);
+  const [lastBeaconAt, setLastBeaconAt] = useState<string | null>(null);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  const lastBeaconCheckpointRef = useRef<string | null>(null);
+
+  const refreshBoard = useCallback(async () => {
+    try {
+      const response = await fetch('/api/board', { cache: 'no-store' });
+      if (!response.ok) throw new Error('Live board unavailable');
+      const data = await response.json() as BoardData;
+      setBoard(data);
+      try { window.localStorage.setItem('byahepanay-board-cache', JSON.stringify(data)); } catch { /* Storage may be disabled or full. */ }
+    } catch {
+      setBoard((current) => current.routes.length ? current : EMPTY_BOARD);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => setClock(new Date()), 30_000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const cached = window.localStorage.getItem('byahepanay-board-cache');
+      if (cached) setBoard(JSON.parse(cached) as BoardData);
+    } catch { /* Ignore invalid or unavailable local cache. */ }
+    void refreshBoard();
+    void getQueuedSightingCount().then(setQueuedCount);
+    if ('serviceWorker' in navigator) {
+      void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    }
+    const online = () => {
+      void flushSightingQueue().then(({ remaining, sent }) => {
+        setQueuedCount(remaining);
+        if (sent > 0) {
+          setMessage({ kind: 'success', text: `${sent} offline sighting${sent === 1 ? '' : 's'} synced.` });
+          void refreshBoard();
+        }
+      }).catch(() => undefined);
+    };
+    window.addEventListener('online', online);
+    return () => window.removeEventListener('online', online);
+  }, [refreshBoard]);
+
+  useEffect(() => {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    const channel = supabase.channel('byahepanay-live-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => { void refreshBoard(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sightings', select: ['id', 'trip_id', 'checkpoint_id', 'is_verified', 'confidence_status'] }, () => { void refreshBoard(); })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [refreshBoard]);
+
+  const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia), [tab, kaliboVia]);
+  const relatedTrips = useMemo(() => board.trips
+    .filter((trip) => (routeMatchesTab(trip.route_id, tab) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
+    .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab]);
+  const activeTrip: Trip | null = relatedTrips[0] ?? null;
+  const activeRoute: RouteDefinition = useMemo(() => {
+    if (activeTrip) {
+      const displayRouteId = tab === 'kalibo' && activeTrip.route_candidate === 'kalibo_mambusao'
+        ? 'kalibo_mambusao' : activeTrip.route_id;
+      return board.routes.find((route) => route.id === displayRouteId) ?? selectedRoute;
+    }
+    return board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute;
+  }, [activeTrip, board.routes, selectedRoute, tab]);
+  const timeline = useMemo(() => activeTrip
+    ? estimateTimeline(activeTrip, activeRoute.checkpoints, clock)
+    : null, [activeTrip, activeRoute, clock]);
+  const waitItem = timeline?.items.find((item) => item.checkpoint.id === waitStopId) ?? null;
+  const cadence = activeTrip ? projectCadence(activeTrip.departure_at, activeTrip.bus_type, 3) : [];
+
+  const submitSighting = useCallback(async (payload: Omit<QueuedSighting, 'queuedAt'>) => {
+    try {
+      const response = await fetch('/api/sightings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string; verified?: boolean; message?: string; checkpoint?: string };
+      if (!response.ok) {
+        setMessage({ kind: 'error', text: result.error ?? 'This sighting could not be accepted.' });
+        return false;
+      }
+      setMessage({
+        kind: result.verified ? 'success' : 'warning',
+        text: result.message ?? (result.verified ? `${result.checkpoint} verified.` : `${result.checkpoint} reported; awaiting confirmation.`),
+      });
+      await refreshBoard();
+      return true;
+    } catch {
+      const queued: QueuedSighting = { ...payload, queuedAt: new Date().toISOString() };
+      try {
+        await enqueueSighting(queued);
+        const count = await getQueuedSightingCount();
+        setQueuedCount(count);
+        setMessage({ kind: 'info', text: 'No signal. Sighting saved on this phone and will sync when your connection returns.' });
+        return true;
+      } catch {
+        setMessage({ kind: 'error', text: 'No connection and local storage is unavailable. The sighting was not saved.' });
+        return false;
+      }
+    }
+  }, [refreshBoard]);
+
+  const recordDeparture = async () => {
+    if (!navigator.geolocation) {
+      setMessage({ kind: 'error', text: 'GPS is required to verify a Pueblo departure.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 });
+      });
+      const response = await fetch('/api/departures', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routeId: selectedRoute.id, busType: departureType, spotterId: getSpotterId(), bodyNumber: departureBody.trim() || undefined, plateNumber: departurePlate.trim() || undefined, lat: position.coords.latitude, lng: position.coords.longitude }),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string; trip?: Trip };
+      if (!response.ok) throw new Error(result.error ?? 'Could not log departure.');
+      setDepartureOpen(false);
+      setTab(selectedRoute.id === 'iloilo_passi' ? 'iloilo' : selectedRoute.id === 'tapaz' ? 'tapaz' : selectedRoute.id === 'estancia' ? 'estancia' : 'kalibo');
+      if (selectedRoute.id === 'kalibo_sapian') setKaliboVia('sapian');
+      if (selectedRoute.id === 'kalibo_mambusao') setKaliboVia('mambusao');
+      setMessage({ kind: 'success', text: `${departureType === 'aircon' ? 'Aircon' : 'Ordinary'} departure logged from Pueblo de Panay.` });
+      setDepartureBody(''); setDeparturePlate('');
+      await refreshBoard();
+    } catch (error) {
+      const geoCode = typeof error === 'object' && error !== null && 'code' in error ? Number(error.code) : 0;
+      const messageText = geoCode
+        ? geoCode === 1 ? 'Allow location access to log a terminal departure.' : 'Could not get a GPS fix at Pueblo Terminal.'
+        : error instanceof Error ? error.message : 'Departure could not be recorded.';
+      setMessage({ kind: 'error', text: messageText });
+    } finally { setBusy(false); }
+  };
+
+  const reportRoadside = () => {
+    if (!activeTrip || activeTrip.status !== 'active') {
+      setMessage({ kind: 'info', text: activeTrip?.status === 'arrived' ? 'This trip has already reached its terminal.' : 'There is no active trip on this corridor yet. Log a departure first.' });
+      return;
+    }
+    if (!navigator.geolocation) {
+      setMessage({ kind: 'error', text: 'GPS is not available in this browser.' });
+      return;
+    }
+    setBusy(true);
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      const nearest = nearestCheckpoint(position.coords, activeRoute.checkpoints);
+      if (!nearest) {
+        setBusy(false);
+        setMessage({ kind: 'error', text: 'No checkpoint coordinates are available for this corridor.' });
+        return;
+      }
+      const threshold = TEST_MODE ? Number.POSITIVE_INFINITY : 300;
+      if (nearest.distanceMeters > threshold) {
+        setBusy(false);
+        setMessage({ kind: 'error', text: `Nearest stop is ${nearest.checkpoint.name}, ${formatDistance(nearest.distanceMeters)} away. Move within 300 m of a mapped checkpoint to report.` });
+        return;
+      }
+      const sent = await submitSighting({
+        tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
+        lat: position.coords.latitude, lng: position.coords.longitude,
+        kind: 'roadside', spotterId: getSpotterId(),
+      });
+      if (sent) setWaitStopId(nearest.checkpoint.id);
+      setBusy(false);
+    }, (error) => {
+      setBusy(false);
+      setMessage({ kind: 'error', text: error.code === error.PERMISSION_DENIED ? 'Allow location access to report a bus sighting.' : 'Could not get a GPS fix. Try again outdoors.' });
+    }, { enableHighAccuracy: true, timeout: 12_000, maximumAge: 8_000 });
+  };
+
+  const lookupBus = async () => {
+    if (!tagBody.trim()) {
+      setMessage({ kind: 'info', text: 'Enter a Ceres body number to look up.' });
+      return;
+    }
+    try {
+      const response = await fetch(`/api/buses?bodyNumber=${encodeURIComponent(tagBody.trim())}`, { cache: 'no-store' });
+      const result = await response.json() as { bus?: { plate_number?: string | null; bus_type?: BusType | null }; error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'No registry match.');
+      setTagPlate(result.bus?.plate_number ?? '');
+      setMessage({ kind: 'success', text: `Registry match found for body ${tagBody.trim()}.` });
+    } catch (error) {
+      setMessage({ kind: 'info', text: error instanceof Error ? error.message : 'No registry match found.' });
+    }
+  };
+
+  const saveBusTag = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeTrip) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/trips/${activeTrip.id}/tag`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bodyNumber: tagBody, plateNumber: tagPlate, spotterId: getSpotterId() }),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Unable to tag bus.');
+      setTagBody(''); setTagPlate('');
+      setMessage({ kind: 'success', text: 'Bus registry tag attached to this trip.' });
+      await refreshBoard();
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Unable to tag bus.' });
+    } finally { setBusy(false); }
+  };
+
+  const updateRiderStatus = async (status: string) => {
+    if (!activeTrip) return;
+    try {
+      const response = await fetch(`/api/trips/${activeTrip.id}/status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, spotterId: getSpotterId() }),
+      });
+      if (!response.ok) throw new Error('Status update failed.');
+      setMessage({ kind: 'success', text: `Rider update sent: ${status.replaceAll('_', ' ')}.` });
+      await refreshBoard();
+    } catch {
+      setMessage({ kind: 'error', text: 'Rider status could not be sent. Check your signal.' });
+    }
+  };
+
+  useEffect(() => {
+    if (!riderMode || !activeTrip || activeTrip.status !== 'active') {
+      if (riderMode && activeTrip?.status === 'arrived') setRiderMode(false);
+      return;
+    }
+    let mounted = true;
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const acquireWakeLock = async () => {
+      const nav = navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } };
+      try {
+        if (nav.wakeLock) {
+          wakeLockRef.current = await nav.wakeLock.request('screen');
+          if (mounted) setWakeLockActive(true);
+        }
+      } catch { if (mounted) setWakeLockActive(false); }
+    };
+    const ping = () => {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        if (!mounted) return;
+        const nearest = nearestCheckpoint(position.coords, activeRoute.checkpoints);
+        if (!nearest || nearest.distanceMeters > 300) return;
+        if (nearest.checkpoint.id === activeTrip.last_checkpoint_id || nearest.checkpoint.id === lastBeaconCheckpointRef.current) return;
+        const sent = await submitSighting({
+          tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
+          lat: position.coords.latitude, lng: position.coords.longitude,
+          kind: 'rider_beacon', spotterId: getSpotterId(),
+        });
+        if (sent && mounted) {
+          lastBeaconCheckpointRef.current = nearest.checkpoint.id;
+          setLastBeaconAt(new Date().toISOString());
+        }
+      }, () => undefined, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 15_000 });
+    };
+    void acquireWakeLock();
+    ping();
+    interval = setInterval(ping, 30_000);
+    return () => {
+      mounted = false;
+      if (interval) clearInterval(interval);
+      if (wakeLockRef.current) {
+        void wakeLockRef.current.release().catch(() => undefined);
+        wakeLockRef.current = null;
+      }
+      setWakeLockActive(false);
+    };
+  }, [riderMode, activeTrip?.id, activeTrip?.status, activeTrip?.last_checkpoint_id, activeRoute, submitSighting]);
+
+  const startRiderMode = async () => {
+    if (!activeTrip || activeTrip.status !== 'active') {
+      setMessage({ kind: 'info', text: activeTrip?.status === 'arrived' ? 'This trip has already reached its terminal.' : 'Log the bus departure first, then turn on Rider Beacon mode.' });
+      if (!activeTrip) setDepartureOpen(true);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setMessage({ kind: 'error', text: 'GPS is not available on this device.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/trips/${activeTrip.id}/join`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spotterId: getSpotterId() }),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Could not join Rider Beacon mode.');
+      setRiderMode(true);
+    } catch (error) {
+      setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Could not join Rider Beacon mode.' });
+    } finally { setBusy(false); }
+  };
+
+  const selectedTab = (value: CorridorTab) => {
+    setTab(value);
+    setWaitStopId(null);
+    setMessage(null);
+  };
+
+  const waitingGuidance = waitItem?.state === 'passed'
+    ? 'This trip has already passed your selected stop.'
+    : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway <= 12
+      ? 'Walk to the highway now.'
+      : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway >= 20
+        ? 'Safe to wait at home for now.'
+        : 'Get ready and keep your phone nearby.';
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="brandline">
+            <div className="brand"><span className="brand-mark">🚌</span><span>ByahePanay</span></div>
+            <div className="eyebrow">Community trip tracker</div>
+          </div>
+          <h1 className="header-title">Catch the last trip.<br />Not the guesswork.</h1>
+          <p className="header-subtitle">Crowd-verified Ceres Liner sightings across Capiz, Iloilo, and Aklan.</p>
+          <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
+        </div>
+      </header>
+
+      <div className="page-content">
+        <section className="corridor-wrap" aria-label="Choose travel corridor">
+          <div className="corridor-tabs">
+            <button className={`corridor-tab ${tab === 'iloilo' ? 'active' : ''}`} onClick={() => selectedTab('iloilo')}>Iloilo<br />(Passi)</button>
+            <button className={`corridor-tab ${tab === 'kalibo' ? 'active' : ''}`} onClick={() => selectedTab('kalibo')}>Kalibo</button>
+            <button className={`corridor-tab ${tab === 'tapaz' ? 'active' : ''}`} onClick={() => selectedTab('tapaz')}>Tapaz</button>
+            <button className={`corridor-tab ${tab === 'estancia' ? 'active' : ''}`} onClick={() => selectedTab('estancia')}>Estancia</button>
+          </div>
+          {tab === 'kalibo' && <div className="variant-switch" aria-label="Kalibo corridor branch">
+            <button className={`variant-button ${kaliboVia === 'mambusao' ? 'active' : ''}`} onClick={() => { setKaliboVia('mambusao'); setWaitStopId(null); }}>Via Mambusao</button>
+            <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
+          </div>}
+        </section>
+
+        {TEST_MODE && <div className="notice" style={{ marginTop: 12 }}>🧪 Test mode is ON: the server skips the 300 m GPS geofence only. Speed, route, and consensus checks still apply.</div>}
+        {!board.configured && <div className="notice info">Demo shell: connect Supabase and run <code>supabase/schema.sql</code> to enable live trips and crowd reports.</div>}
+        <ErrorNotice message={message} />
+        {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}
+
+        <div className="section-label">{activeTrip?.status === 'arrived' ? 'Latest arrival' : 'Active trip'} · {activeRoute.short_name}</div>
+        <section className="card trip-card" aria-live="polite">
+          {activeTrip ? <>
+            <div className="trip-card-top">
+              <div>
+                <div className="trip-type"><span className="bus-symbol">🚌</span>{activeTrip.bus_type === 'aircon' ? 'Aircon · Deluxe' : 'Regular · Ordinary'}</div>
+                <div className="trip-route">{activeRoute.name}</div>
+              </div>
+              <ConfidenceBadge value={activeTrip.confidence_status} />
+            </div>
+            <div className="trip-stats">
+              <div><div className="stat-label">Bus / Plate</div><div className="stat-value">{activeTrip.body_number || 'Not tagged'}{activeTrip.plate_number ? ` · ${activeTrip.plate_number}` : ''}</div></div>
+              <div><div className="stat-label">Left Pueblo</div><div className="stat-value">{formatTime(activeTrip.departure_at)}</div></div>
+              <div><div className="stat-label">Last confirmed</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}</div></div>
+              <div><div className="stat-label">Checkpoint time</div><div className="stat-value">{formatTime(activeTrip.last_checkpoint_at)}</div></div>
+            </div>
+            <div className="destination-window">
+              <div><span>{activeTrip.status === 'arrived' ? `Arrived · ${activeRoute.destination}` : `Safe arrival window · ${activeRoute.destination}`}</span><strong>{activeTrip.status === 'arrived' ? formatTime(activeTrip.last_checkpoint_at) : arrivalWindowLabel(timeline?.arrivalWindow ?? null)}</strong></div>
+              <div aria-hidden="true" style={{ fontSize: 23 }}>🏁</div>
+            </div>
+            {timeline && timeline.delayMinutes >= 1 && timeline.nextCheckpoint && <div className="notice">⚠️ Delayed +{timeline.delayMinutes} mins — awaiting {timeline.nextCheckpoint.name} checkpoint confirmation.</div>}
+            {activeTrip.route_candidate && !activeTrip.route_locked && <div className="notice info">Route is provisional after Mambusao. Waiting for Jamindan/Tapaz or Kalibo-side confirmation.</div>}
+            {activeTrip.status === 'active' && <details className="details-box">
+              <summary>🪪 Bus Registry Lookup / Tag</summary>
+              <form className="form-grid" onSubmit={saveBusTag}>
+                <div className="field"><label htmlFor="tag-body">Ceres body number</label><input id="tag-body" value={tagBody} onChange={(event) => setTagBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} required /></div>
+                <div className="field"><label htmlFor="tag-plate">Plate number</label><input id="tag-plate" value={tagPlate} onChange={(event) => setTagPlate(event.target.value)} placeholder="Optional" maxLength={16} /></div>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="secondary-button" type="button" onClick={lookupBus} disabled={busy}>Lookup body number</button><button className="primary-button" type="submit" disabled={busy}>Attach bus tag</button></div>
+              </form>
+            </details>}
+          </> : <div className="empty-trip">
+            <strong>{loading ? 'Checking the live board…' : 'No active trip confirmed on this corridor'}</strong>
+            <p>Log a departure when a bus actually leaves Pueblo, or check back for a community-verified sighting.</p>
+          </div>}
+        </section>
+
+        <div className="section-label">Checkpoint timeline</div>
+        <section className="card timeline-card">
+          {(timeline?.items ?? activeRoute.checkpoints.map((checkpoint) => ({ checkpoint, state: 'upcoming' as const, eta: null, minutesAway: null }))).map((item) => {
+            const stateText = item.state === 'passed' ? 'Passed' : item.state === 'pending' ? '1 report · awaiting confirmation' : item.state === 'approaching' ? 'Approaching' : 'Upcoming';
+            const dotText = item.state === 'passed' ? '✓' : item.state === 'pending' ? '!' : item.state === 'approaching' ? '🚌' : '·';
+            return <div className="timeline-row" key={item.checkpoint.id}>
+              <div className="timeline-track"><span className={`timeline-dot ${item.state}`}>{dotText}</span></div>
+              <button className={`wait-button ${waitStopId === item.checkpoint.id ? 'selected' : ''}`} onClick={() => setWaitStopId(item.checkpoint.id)}>
+                <div className={`checkpoint-name ${item.state === 'upcoming' ? 'dim' : ''}`}>{item.checkpoint.name}</div>
+                <div className="checkpoint-status">{stateText}</div>
+              </button>
+              <div className="checkpoint-eta">
+                <strong>{item.state === 'passed' ? '✓' : item.state === 'pending' ? 'Pending' : item.eta ? formatTime(item.eta) : '—'}</strong>
+                <span>{item.state === 'passed' ? 'Confirmed' : item.minutesAway !== null ? `${item.minutesAway} min` : item.state === 'pending' ? 'Unverified' : 'ETA pending'}</span>
+              </div>
+            </div>;
+          })}
+        </section>
+        {waitStopId && <section className="card wait-card" style={{ marginTop: 10 }}>
+          <div className="wait-card-top"><h3>📍 My Waiting Stop</h3><button className="secondary-button" type="button" onClick={() => setWaitStopId(null)}>Clear</button></div>
+          <div className="wait-eta">{waitItem?.eta ? formatTime(waitItem.eta) : waitItem?.state === 'passed' ? 'Already passed' : 'ETA pending'}</div>
+          <div className="wait-guidance">{activeRoute.checkpoints.find((point) => point.id === waitStopId)?.name} · {waitingGuidance}</div>
+        </section>}
+
+        <div className="section-label">Next 30-minute dispatch slots</div>
+        {activeTrip ? <div className="cadence-list">
+          {cadence.map((slot) => <div className="cadence-item" key={slot.departureAt.toISOString()}>
+            <div className="cadence-time">{formatTime(slot.departureAt)}</div>
+            <div className="cadence-type">{slot.busType === 'aircon' ? 'Aircon · Deluxe' : 'Regular · Ordinary'}</div>
+            <div className="cadence-state">⚪ Scheduled · Unconfirmed</div>
+          </div>)}
+        </div> : <div className="card empty-trip"><p>Projected slots appear after an actual departure is logged as the cadence anchor. These are projections, not confirmed operator dispatches.</p></div>}
+
+        <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official Ceres Liner schedules. Coordinates must be field-checked before public operational use.</p>
+      </div>
+
+      <nav className="bottom-bar" aria-label="Crowdsourcing actions">
+        <div className="bottom-actions">
+          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy}><span className="action-icon">🏁</span><span>Left Pueblo<br />Terminal</span></button>
+          <button className="action-button main" onClick={reportRoadside} disabled={busy}><span className="action-icon">👀</span><span>Bus Just Passed<br />Here</span></button>
+          <button className="action-button beacon" onClick={startRiderMode} disabled={busy}><span className="action-icon">🚌</span><span>I'm on This Bus<br />Rider Beacon</span></button>
+        </div>
+      </nav>
+
+      {departureOpen && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDepartureOpen(false); }}>
+        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="departure-title">
+          <h2 id="departure-title">Log a Pueblo departure</h2>
+          <p>Only log a departure after the bus actually leaves the terminal. This becomes the 30-minute cadence anchor for projected slots.</p>
+          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-route">Corridor</label><select id="departure-route" value={selectedRoute.id} onChange={(event) => {
+            const route = ROUTES.find((candidate) => candidate.id === event.target.value);
+            if (!route) return;
+            if (route.id === 'iloilo_passi') setTab('iloilo');
+            else if (route.id === 'tapaz') setTab('tapaz');
+            else if (route.id === 'estancia') setTab('estancia');
+            else { setTab('kalibo'); setKaliboVia(route.id === 'kalibo_sapian' ? 'sapian' : 'mambusao'); }
+          }}>
+            <option value="iloilo_passi">Iloilo via Passi</option><option value="kalibo_mambusao">Kalibo via Mambusao</option><option value="kalibo_sapian">Kalibo via Sapian</option><option value="tapaz">Tapaz / Calinog</option><option value="estancia">Estancia</option>
+          </select></div>
+          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-type">Bus type</label><select id="departure-type" value={departureType} onChange={(event) => setDepartureType(event.target.value as BusType)}><option value="aircon">Aircon · Deluxe</option><option value="ordinary">Regular · Ordinary</option></select></div>
+          <div className="form-grid">
+            <div className="field"><label htmlFor="departure-body">Body number · optional</label><input id="departure-body" value={departureBody} onChange={(event) => setDepartureBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} /></div>
+            <div className="field"><label htmlFor="departure-plate">Plate · optional</label><input id="departure-plate" value={departurePlate} onChange={(event) => setDeparturePlate(event.target.value)} placeholder="Plate number" maxLength={16} /></div>
+          </div>
+          <div className="modal-actions"><button className="secondary-button" onClick={() => setDepartureOpen(false)} type="button">Cancel</button><button className="primary-button" onClick={recordDeparture} disabled={busy}>{busy ? 'Saving…' : 'Confirm actual departure'}</button></div>
+        </section>
+      </div>}
+
+      {riderMode && activeTrip && <section className="beacon-screen" aria-label="Rider Beacon mode">
+        <div>
+          <div className="eyebrow">ByahePanay · Rider Beacon</div>
+          <h2>{activeRoute.destination} trip beacon active</h2>
+          <div className="beacon-orb">🚌</div>
+          <div className="beacon-meta">GPS checks every 30 seconds<br />{wakeLockActive ? 'Screen wake lock active' : 'Screen may dim on this device'}<br />Last checkpoint: {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}<br />Last beacon: {lastBeaconAt ? formatTime(lastBeaconAt) : 'Waiting for GPS fix'}</div>
+        </div>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 8 }}>One-tap rider updates</div>
+          <div className="beacon-status-grid">
+            <button onClick={() => void updateRiderStatus('seats_available')}>🪑 Seats Available</button>
+            <button onClick={() => void updateRiderStatus('standing_only')}>🧍 Standing Only</button>
+            <button onClick={() => void updateRiderStatus('stopped_cargo_traffic_10m')}>⏸ Stopped · Cargo / Traffic +10m</button>
+            <button onClick={() => void updateRiderStatus('mechanical_breakdown')}>🔧 Mechanical Breakdown</button>
+          </div>
+          {message && <div className="notice info">{message.text}</div>}
+          <button className="beacon-stop" style={{ width: '100%', marginTop: 14 }} onClick={() => { setRiderMode(false); void updateRiderStatus('moving'); }}>Stop Rider Beacon</button>
+        </div>
+      </section>}
+    </main>
+  );
+}
