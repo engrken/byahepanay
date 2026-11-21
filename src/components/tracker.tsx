@@ -5,7 +5,6 @@ import { ROUTES, routeForTab } from '@/lib/corridors';
 import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
 import { nearestCheckpoint, formatDistance } from '@/lib/geo';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
-import { getBrowserSupabase } from '@/lib/supabase';
 import type { BoardData, BusType, Checkpoint, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
@@ -119,13 +118,18 @@ export default function Tracker() {
   }, [refreshBoard]);
 
   useEffect(() => {
-    const supabase = getBrowserSupabase();
-    if (!supabase) return;
-    const channel = supabase.channel('byahepanay-live-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips' }, () => { void refreshBoard(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sightings', select: ['id', 'trip_id', 'checkpoint_id', 'is_verified', 'confidence_status'] }, () => { void refreshBoard(); })
-      .subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    // Neon Realtime is optional; poll the server-side Neon board while the page is visible.
+    const poll = () => {
+      if (document.visibilityState === 'visible') void refreshBoard();
+    };
+    const timer = window.setInterval(poll, 10_000);
+    document.addEventListener('visibilitychange', poll);
+    window.addEventListener('focus', poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', poll);
+      window.removeEventListener('focus', poll);
+    };
   }, [refreshBoard]);
 
   const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia), [tab, kaliboVia]);
@@ -408,7 +412,7 @@ export default function Tracker() {
         </section>
 
         {TEST_MODE && <div className="notice" style={{ marginTop: 12 }}>🧪 Test mode is ON: the server skips the 300 m GPS geofence only. Speed, route, and consensus checks still apply.</div>}
-        {!board.configured && <div className="notice info">Demo shell: connect Supabase and run <code>supabase/schema.sql</code> to enable live trips and crowd reports.</div>}
+        {!board.configured && <div className="notice info">Demo shell: connect Neon and apply <code>neon/schema.sql</code> to enable live trips and crowd reports.</div>}
         <ErrorNotice message={message} />
         {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}
 

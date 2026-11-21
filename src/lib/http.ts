@@ -5,7 +5,7 @@ export function jsonError(message: string, status = 400, code?: string) {
 }
 
 export function adminUnavailable() {
-  return jsonError('Validated write API is not configured. Add SUPABASE_SERVICE_ROLE_KEY on the server.', 503, 'SERVER_WRITE_NOT_CONFIGURED');
+  return jsonError('Neon database is not configured. Attach the ByahePanay Neon integration or set DATABASE_URL.', 503, 'DATABASE_NOT_CONFIGURED');
 }
 
 export function isUuid(value: unknown): value is string {
