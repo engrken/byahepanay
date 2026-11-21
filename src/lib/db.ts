@@ -1,6 +1,12 @@
 import { neon } from '@neondatabase/serverless';
 
-type NeonSql = ReturnType<typeof neon>;
+// The Neon HTTP driver returns an array of row objects in its default mode.
+// Keep that contract explicit so API handlers can safely index/count rows.
+type NeonSql = (
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => Promise<Record<string, unknown>[]>;
+
 let cachedSql: NeonSql | null = null;
 
 /**
@@ -11,6 +17,6 @@ let cachedSql: NeonSql | null = null;
 export function getDb(): NeonSql | null {
   const connectionString = process.env.BYAHEPANAY_DATABASE_URL || process.env.DATABASE_URL;
   if (!connectionString) return null;
-  if (!cachedSql) cachedSql = neon(connectionString);
+  if (!cachedSql) cachedSql = neon(connectionString) as unknown as NeonSql;
   return cachedSql;
 }
