@@ -75,7 +75,7 @@ export default function Tracker() {
   const refreshOtpStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/otp/status', { cache: 'no-store', credentials: 'same-origin' });
-      if (response.ok) setOtpStatus(await response.json() as PhoneOtpState);
+      if (response.ok) setOtpStatus(await response.json() as EmailOtpState);
     } catch { /* Keep the last known verification state. */ }
   }, []);
 
