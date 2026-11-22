@@ -11,7 +11,9 @@ export function resolveDepartureCheckpoint(
   selectedCheckpointId: string,
 ): Checkpoint | null {
   const available = getStartableCheckpoints(route);
-  return available.find((checkpoint) => checkpoint.id === selectedCheckpointId) ?? available[0] ?? null;
+  if (!selectedCheckpointId) return available[0] ?? null;
+  // Accept a legacy static corridor code (for example "bolo") but always return its live UUID.
+  return available.find((checkpoint) => checkpoint.id === selectedCheckpointId || checkpoint.code === selectedCheckpointId) ?? null;
 }
 
 /** The departure API expects the UUID primary key returned by /api/board. */
