@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { CONFIRMATION_OVERDUE_GRACE_MINUTES, TRACKING_LOST_AFTER_MINUTES } from '@/lib/eta';
 
 type ActiveTrip = {
   id: string;
@@ -54,8 +55,6 @@ type Metrics = {
   activeTrips: ActiveTrip[];
 };
 
-const TRACKING_LOST_AFTER_MINUTES = 90;
-
 function minutesSince(value: string) {
   return Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
 }
@@ -71,7 +70,7 @@ function timeAgo(value: string) {
 
 function freshnessLabel(minutes: number) {
   if (minutes >= TRACKING_LOST_AFTER_MINUTES) return { label: 'Tracking lost', tone: 'critical' };
-  if (minutes >= 30) return { label: 'Confirmation overdue', tone: 'warning' };
+  if (minutes >= CONFIRMATION_OVERDUE_GRACE_MINUTES) return { label: 'Confirmation overdue', tone: 'warning' };
   return { label: 'Recently confirmed', tone: 'healthy' };
 }
 
