@@ -8,7 +8,7 @@ function getHashingSecret() {
 }
 
 export function isEmailOtpConfigured() {
-  return Boolean(process.env.GMAIL_USER?.trim() && process.env.GMAIL_APP_PASSWORD?.replace(/\\s+/g, ''));
+  return Boolean(process.env.GMAIL_USER?.trim() && process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, ''));
 }
 
 export function isEmailVerificationRequired() {
@@ -18,7 +18,7 @@ export function isEmailVerificationRequired() {
 export function normalizeEmailAddress(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const candidate = value.trim().normalize('NFKC');
-  if (!candidate || candidate.length > 254 || /[\\s<>(),;:"\\\\]/.test(candidate)) return null;
+  if (!candidate || candidate.length > 254 || /[\s<>(),;:"\\]/.test(candidate)) return null;
   const at = candidate.lastIndexOf('@');
   if (at <= 0 || at !== candidate.indexOf('@')) return null;
   const local = candidate.slice(0, at);
