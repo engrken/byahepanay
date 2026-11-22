@@ -12,7 +12,8 @@ export function isEmailOtpConfigured() {
 }
 
 export function isEmailVerificationRequired() {
-  return process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
+  // Production always fails closed: a missing or mis-set flag must never reopen anonymous contribution writes.
+  return process.env.NODE_ENV === 'production' || process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
 }
 
 export function normalizeEmailAddress(value: unknown): string | null {
@@ -48,7 +49,16 @@ export function createEmailOtpCode() {
 }
 
 export async function getReporterIdentity(sql: NeonSql, spotterId: string): Promise<string | null> {
-  const rows = await sql`select reporter_id from public.spotter_reporter_links where spotter_id = ${spotterId}::uuid limit 1`;
+  // A legacy phone-verified (SMS) identity is not sufficient for the email-OTP contribution policy.
+  const rows = await sql`
+    select l.reporter_id
+    from public.spotter_reporter_links l
+    join public.reporter_identities i on i.id = l.reporter_id
+    where l.spotter_id = ${spotterId}::uuid
+      and i.verification_method = 'email'
+      and i.email_hash is not null
+    limit 1
+  `;
   return (rows[0] as { reporter_id: string } | undefined)?.reporter_id ?? null;
 }
 

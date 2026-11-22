@@ -18,16 +18,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const rows = await sql`select i.email_masked, i.phone_masked, i.verification_method
+    const rows = await sql`select i.email_masked, i.verification_method
       from public.spotter_reporter_links l
       join public.reporter_identities i on i.id = l.reporter_id
-      where l.spotter_id = ${spotterId}::uuid limit 1`;
-    const identity = rows[0] as { email_masked: string | null; phone_masked: string | null; verification_method: string } | undefined;
+      where l.spotter_id = ${spotterId}::uuid
+        and i.verification_method = 'email'
+        and i.email_hash is not null
+      limit 1`;
+    const identity = rows[0] as { email_masked: string | null; verification_method: string } | undefined;
     return NextResponse.json({
       configured: isEmailOtpConfigured(),
       required: isEmailVerificationRequired(),
       verified: Boolean(identity),
-      emailMasked: identity?.email_masked ?? identity?.phone_masked ?? null,
+      emailMasked: identity?.email_masked ?? null,
       verificationMethod: identity?.verification_method ?? null,
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

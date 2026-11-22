@@ -32,6 +32,8 @@ export async function isDeveloperAdmin(sql: NeonSql, spotterId: string): Promise
     where l.spotter_id = ${spotterId}::uuid
       and i.email_hash = ${emailHash}
       and i.verification_method = 'email'
+      and i.email_hash is not null
+      and i.verified_at is not null
     limit 1
   `;
   return rows.length > 0;
