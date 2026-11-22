@@ -622,10 +622,13 @@ export default function Tracker() {
             <button className={`corridor-tab ${tab === 'tapaz' ? 'active' : ''}`} onClick={() => selectedTab('tapaz')}>Tapaz</button>
             <button className={`corridor-tab ${tab === 'estancia' ? 'active' : ''}`} onClick={() => selectedTab('estancia')}>Estancia</button>
           </div>
-          {tab === 'kalibo' && <div className="variant-switch" aria-label="Kalibo corridor branch">
-            <button className={`variant-button ${kaliboVia === 'mambusao' ? 'active' : ''}`} onClick={() => { setKaliboVia('mambusao'); setWaitStopId(null); }}>Via Mambusao</button>
-            <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
-          </div>}
+          {tab === 'kalibo' && <>
+            <div className="variant-switch" aria-label="Kalibo corridor branch">
+              <button className={`variant-button ${kaliboVia === 'mambusao' ? 'active' : ''}`} onClick={() => { setKaliboVia('mambusao'); setWaitStopId(null); }}>Via Mambusao</button>
+              <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
+            </div>
+            <p className="verification-footnote">Current coverage ends at Kalibo Terminal. Caticlan is not yet mapped in this pilot, so no Caticlan ETA is shown.</p>
+          </>}
         </section>
 
         <section className="card arrival-card" id="arrivals" aria-label="Next buses near your stop">
