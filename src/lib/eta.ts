@@ -1,4 +1,5 @@
-import type { Checkpoint, TimelineItem, Trip } from './types';
+import type { Checkpoint, CheckpointLandmark, TimelineItem, Trip } from './types';
+import { MAX_LANDMARK_ETA_ROUTE_DISTANCE_METERS } from './checkpoint-landmarks';
 
 const MINUTE = 60_000;
 export const CONFIRMATION_OVERDUE_GRACE_MINUTES = 15;
@@ -117,6 +118,112 @@ export function estimateTimeline(
     minutesSinceCheckpoint,
     confirmationOverdue,
     trackingLost,
+  };
+}
+
+
+export interface LandmarkRouteProjection {
+  segmentIndex: number;
+  fraction: number;
+  distanceMeters: number;
+}
+
+export interface LandmarkEtaEstimate {
+  status: 'estimated' | 'passed' | 'needs_review' | 'unavailable';
+  eta: Date | null;
+  minutesAway: number | null;
+  distanceFromRouteMeters: number;
+}
+
+/** Project a landmark onto the nearest segment of the selected route polyline. */
+export function projectLandmarkToRoute(
+  landmark: Pick<CheckpointLandmark, 'lat' | 'lng'>,
+  checkpoints: Checkpoint[],
+): LandmarkRouteProjection | null {
+  if (checkpoints.length < 2) return null;
+  const earthRadius = 6_371_008.8;
+  let nearest: LandmarkRouteProjection | null = null;
+
+  for (let index = 0; index < checkpoints.length - 1; index += 1) {
+    const start = checkpoints[index];
+    const end = checkpoints[index + 1];
+    const referenceLatitude = ((start.lat + end.lat + landmark.lat) / 3) * Math.PI / 180;
+    const metersPerDegreeLatitude = earthRadius * Math.PI / 180;
+    const metersPerDegreeLongitude = metersPerDegreeLatitude * Math.cos(referenceLatitude);
+    const x = (lng: number) => lng * metersPerDegreeLongitude;
+    const y = (lat: number) => lat * metersPerDegreeLatitude;
+    const ax = x(start.lng);
+    const ay = y(start.lat);
+    const dx = x(end.lng) - ax;
+    const dy = y(end.lat) - ay;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) continue;
+    const fraction = Math.max(0, Math.min(1, ((x(landmark.lng) - ax) * dx + (y(landmark.lat) - ay) * dy) / lengthSquared));
+    const projectedX = ax + fraction * dx;
+    const projectedY = ay + fraction * dy;
+    const distanceMeters = Math.hypot(x(landmark.lng) - projectedX, y(landmark.lat) - projectedY);
+    if (!nearest || distanceMeters < nearest.distanceMeters) {
+      nearest = { segmentIndex: index, fraction, distanceMeters };
+    }
+  }
+
+  return nearest;
+}
+
+/**
+ * Estimate a landmark ETA by interpolating between the two adjacent barangay ETAs.
+ * Landmarks far from the planning route or outside their barangay's adjacent route
+ * segments are shown for reference but deliberately receive no ETA.
+ */
+export function estimateLandmarkEta(
+  trip: Trip,
+  checkpoints: Checkpoint[],
+  timeline: TimelineEstimate,
+  landmark: CheckpointLandmark,
+): LandmarkEtaEstimate {
+  const ordered = [...checkpoints].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+  const projection = projectLandmarkToRoute(landmark, ordered);
+  const unavailable = (status: LandmarkEtaEstimate['status'], distanceFromRouteMeters = Number.POSITIVE_INFINITY): LandmarkEtaEstimate => ({
+    status, eta: null, minutesAway: null, distanceFromRouteMeters,
+  });
+  if (!projection) return unavailable('unavailable');
+
+  const parentIndex = ordered.findIndex((checkpoint) => checkpoint.code === landmark.checkpointCode);
+  if (parentIndex < 0 || projection.distanceMeters > MAX_LANDMARK_ETA_ROUTE_DISTANCE_METERS ||
+      projection.segmentIndex < parentIndex - 1 || projection.segmentIndex > parentIndex) {
+    return unavailable('needs_review', projection.distanceMeters);
+  }
+
+  const startIndexCandidate = trip.start_checkpoint_id
+    ? ordered.findIndex((checkpoint) => checkpoint.id === trip.start_checkpoint_id)
+    : 0;
+  const startIndex = startIndexCandidate >= 0 ? startIndexCandidate : 0;
+  const lastId = trip.last_checkpoint_id ?? trip.start_checkpoint_id ?? ordered[startIndex]?.id;
+  const foundLastIndex = ordered.findIndex((checkpoint) => checkpoint.id === lastId);
+  const lastIndex = foundLastIndex >= startIndex ? foundLastIndex : startIndex;
+  const segmentIndex = projection.segmentIndex;
+
+  if (segmentIndex < lastIndex || trip.status === 'arrived') {
+    return unavailable('passed', projection.distanceMeters);
+  }
+  if (trip.status !== 'active') return unavailable('unavailable', projection.distanceMeters);
+
+  const startTime = segmentIndex === lastIndex
+    ? new Date(trip.last_checkpoint_at ?? trip.departure_at)
+    : timeline.items[segmentIndex]?.eta;
+  const endTime = timeline.items[segmentIndex + 1]?.eta;
+  if (!startTime || !endTime || !Number.isFinite(startTime.getTime()) || !Number.isFinite(endTime.getTime()) ||
+      endTime.getTime() < startTime.getTime()) {
+    return unavailable('unavailable', projection.distanceMeters);
+  }
+
+  const etaMs = startTime.getTime() + (endTime.getTime() - startTime.getTime()) * projection.fraction;
+  const eta = new Date(etaMs);
+  return {
+    status: 'estimated',
+    eta,
+    minutesAway: Math.max(0, Math.ceil((etaMs - Date.now()) / MINUTE)),
+    distanceFromRouteMeters: projection.distanceMeters,
   };
 }
 
