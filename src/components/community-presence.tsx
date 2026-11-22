@@ -62,16 +62,18 @@ export default function CommunityPresence() {
     const timer = window.setInterval(poll, REFRESH_INTERVAL_MS);
     document.addEventListener('visibilitychange', poll);
     window.addEventListener('focus', poll);
-    window.addEventListener('online', () => {
+    const handleOnline = () => {
       updateConnection();
       void refresh();
-    });
+    };
+    window.addEventListener('online', handleOnline);
     window.addEventListener('offline', updateConnection);
 
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', poll);
       document.removeEventListener('focus', poll);
+      window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', updateConnection);
     };
   }, [refresh]);
