@@ -98,8 +98,11 @@ export default function Tracker() {
     document.documentElement.dataset.theme = nextTheme;
     document.documentElement.style.colorScheme = nextTheme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', nextTheme === 'dark' ? '#101a22' : '#152b3a');
-    setTheme(nextTheme);
-    setThemeReady(true);
+    const themeFrame = window.requestAnimationFrame(() => {
+      setTheme(nextTheme);
+      setThemeReady(true);
+    });
+    return () => window.cancelAnimationFrame(themeFrame);
   }, []);
 
   useEffect(() => {
@@ -124,7 +127,10 @@ export default function Tracker() {
   useEffect(() => {
     try {
       const cached = window.localStorage.getItem('byahepanay-board-cache');
-      if (cached) setBoard(JSON.parse(cached) as BoardData);
+      if (cached) {
+        const cachedBoard = JSON.parse(cached) as BoardData;
+        window.requestAnimationFrame(() => setBoard(cachedBoard));
+      }
     } catch { /* Ignore invalid or unavailable local cache. */ }
     void ensureSpotterSession().catch(() => setMessage({ kind: 'warning', text: 'Secure reporting is unavailable until a session can be initialized.' }));
     void refreshBoard();
@@ -381,13 +387,16 @@ export default function Tracker() {
     }
   };
 
+  const riderTripId = activeTrip?.id;
+  const riderTripStatus = activeTrip?.status;
+  const riderTripLastCheckpointId = activeTrip?.last_checkpoint_id;
+
   useEffect(() => {
-    if (!riderMode || !activeTrip || activeTrip.status !== 'active') {
-      if (riderMode && activeTrip?.status === 'arrived') setRiderMode(false);
+    if (!riderMode || !riderTripId || riderTripStatus !== 'active') {
+      if (riderMode && riderTripStatus === 'arrived') queueMicrotask(() => setRiderMode(false));
       return;
     }
     let mounted = true;
-    let interval: ReturnType<typeof setInterval> | undefined;
     const acquireWakeLock = async () => {
       const nav = navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } };
       try {
@@ -403,9 +412,9 @@ export default function Tracker() {
         if (!mounted) return;
         const nearest = nearestCheckpoint(position.coords, activeRoute.checkpoints);
         if (!nearest || nearest.distanceMeters > 300) return;
-        if (nearest.checkpoint.id === activeTrip.last_checkpoint_id || nearest.checkpoint.id === lastBeaconCheckpointRef.current) return;
+        if (nearest.checkpoint.id === riderTripLastCheckpointId || nearest.checkpoint.id === lastBeaconCheckpointRef.current) return;
         const sent = await submitSighting({
-          tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
+          tripId: riderTripId, checkpointId: nearest.checkpoint.id,
           lat: position.coords.latitude, lng: position.coords.longitude,
           kind: 'rider_beacon', 
         });
@@ -417,17 +426,17 @@ export default function Tracker() {
     };
     void acquireWakeLock();
     ping();
-    interval = setInterval(ping, 30_000);
+    const interval = window.setInterval(ping, 30_000);
     return () => {
       mounted = false;
-      if (interval) clearInterval(interval);
+      window.clearInterval(interval);
       if (wakeLockRef.current) {
         void wakeLockRef.current.release().catch(() => undefined);
         wakeLockRef.current = null;
       }
       setWakeLockActive(false);
     };
-  }, [riderMode, activeTrip?.id, activeTrip?.status, activeTrip?.last_checkpoint_id, activeRoute, submitSighting]);
+  }, [riderMode, riderTripId, riderTripStatus, riderTripLastCheckpointId, activeRoute, submitSighting]);
 
   const startRiderMode = async () => {
     if (!activeTrip || activeTrip.status !== 'active') {

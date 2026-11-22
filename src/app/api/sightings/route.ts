@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
   }
   if (body.kind !== 'roadside' && body.kind !== 'rider_beacon') return jsonError('Unknown sighting type.');
   if (!isUuid(body.requestId)) return jsonError('A unique request identifier is required.');
-  const allowedRiderStatuses = ['seats_available', 'standing_only', 'stopped_cargo_traffic_10m', 'mechanical_breakdown', 'moving'];
+  const allowedRiderStatuses = ['seats_available', 'standing_only', 'mechanical_breakdown', 'moving'];
   if (body.riderStatus !== undefined && !allowedRiderStatuses.includes(body.riderStatus)) return jsonError('Choose a supported rider status.');
 
   const tripId = body.tripId;
