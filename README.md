@@ -124,3 +124,13 @@ The app display name is now **BiyahePanay**. Existing IndexedDB, local-storage, 
 - Presence records contain only opaque session IDs and verified reporter IDs; no GPS, IP address, full email or user-agent is collected for these counters.
 - The five pilot checkpoint pins supplied by the project owner are tagged as pending field validation until the passenger waiting point and highway side are checked on site. Operations links each candidate pin to Google Maps.
 - Nearest-stop matching does not confidently name a distant fallback when no stop is within 1.5 km (or 3 times reported GPS accuracy, if greater).
+
+
+## Bidirectional corridors and checkpoint-first reporting
+
+- The tracker supports Roxas City outbound and return journeys for Iloilo via Passi, Kalibo via Mambusao or Sapian, Tapaz / Calinog, and Estancia.
+- A trip can start at any mapped checkpoint on its selected direction. The first contributor chooses the route and observed checkpoint; GPS must be within 300 metres of that checkpoint. A terminal log is not required.
+- ETAs are relative to the first confirmed checkpoint. Stops earlier than the observed start are labelled “Before this trip started,” not “Passed.”
+- Kalibo coverage currently ends at Kalibo Terminal. Caticlan is not mapped or ETA-calibrated in this pilot and must not be represented as a tracked stop until field-verified data is added.
+- Apply neon/migrations/20261122_pilot_readiness.sql and neon/migrations/20261122_bidirectional_trip_starts.sql to the existing production database before deploying the matching application release. Fresh installations should use the updated neon/schema.sql.
+- Run npm test, npm run typecheck, npm run lint, and npm run build before release.
