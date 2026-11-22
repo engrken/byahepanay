@@ -1,4 +1,4 @@
-import type { Checkpoint } from './types';
+import type { Checkpoint, CheckpointLandmark } from './types';
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -31,6 +31,31 @@ export function nearestCheckpoint<T extends Checkpoint>(
     }
   }
   return nearest && nearestMeters <= maxDistanceMeters ? { checkpoint: nearest, distanceMeters: nearestMeters } : null;
+}
+
+/** Find the nearest reportable checkpoint location, including its optional landmarks. */
+export function nearestCheckpointLocation<T extends Checkpoint>(
+  point: Pick<GeolocationCoordinates, 'latitude' | 'longitude'>,
+  checkpoints: T[],
+  maxDistanceMeters = Number.POSITIVE_INFINITY,
+): { checkpoint: T; landmark: CheckpointLandmark | null; distanceMeters: number } | null {
+  let nearest: { checkpoint: T; landmark: CheckpointLandmark | null; distanceMeters: number } | null = null;
+  for (const checkpoint of checkpoints) {
+    const locations: Array<{ landmark: CheckpointLandmark | null; lat: number; lng: number }> = [
+      { landmark: null, lat: checkpoint.lat, lng: checkpoint.lng },
+      ...(checkpoint.landmarks ?? []).map((landmark) => ({ landmark, lat: landmark.lat, lng: landmark.lng })),
+    ];
+    for (const location of locations) {
+      const distanceMeters = haversineKm(
+        { lat: point.latitude, lng: point.longitude },
+        { lat: location.lat, lng: location.lng },
+      ) * 1000;
+      if (!nearest || distanceMeters < nearest.distanceMeters) {
+        nearest = { checkpoint, landmark: location.landmark, distanceMeters };
+      }
+    }
+  }
+  return nearest && nearest.distanceMeters <= maxDistanceMeters ? nearest : null;
 }
 
 export function formatDistance(meters: number): string {
