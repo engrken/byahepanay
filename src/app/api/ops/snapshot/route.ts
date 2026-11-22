@@ -4,8 +4,8 @@ export const dynamic='force-dynamic';export const runtime='nodejs';
 export async function GET(request:NextRequest){const secret=process.env.CRON_SECRET;if(!secret||request.headers.get('authorization')!==`Bearer ${secret}`)return NextResponse.json({error:'Unauthorized'},{status:401});const sql=getDb();if(!sql)return NextResponse.json({error:'Database unavailable'},{status:503});const started=Date.now();try{
 const[dailyRows,healthRows]=await Promise.all([
 sql`with bounds as (
-  select (now() at time zone 'Asia/Manila')::date as metric_date,
-    ((now() at time zone 'Asia/Manila')::date::timestamp at time zone 'Asia/Manila') as start_at
+  select ((now() at time zone 'Asia/Manila')::date - 1) as metric_date,
+    (((now() at time zone 'Asia/Manila')::date - 1)::timestamp at time zone 'Asia/Manila') as start_at
 ), report_stats as (
   select count(*)::int as report_count,
     count(*) filter(where s.is_verified)::int as verified_report_count,
