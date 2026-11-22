@@ -1,5 +1,5 @@
 import type { Checkpoint, CheckpointLandmark, TimelineItem, Trip } from './types';
-import { MAX_LANDMARK_ETA_ROUTE_DISTANCE_METERS } from './checkpoint-landmarks';
+import { MAX_LANDMARK_ETA_ROUTE_DISTANCE_METERS } from './checkpoint-landmarks.ts';
 
 const MINUTE = 60_000;
 export const CONFIRMATION_OVERDUE_GRACE_MINUTES = 15;
