@@ -12,7 +12,7 @@ Mobile-first Next.js PWA for community checkpoint reports and estimated Ceres Li
 
 ## Database setup
 
-The Vercel project is named `biyahepanay` and remains connected to the existing Neon Marketplace database `byahepanay` in Singapore. The current Neon integration injects `BYAHEPANAY_DATABASE_URL`; the app now prefers `BIYAHEPANAY_DATABASE_URL` when present and falls back to the existing integration variable, so the database connection remains compatible during the rename.
+The Vercel project is named `biyahepanay` and remains connected to the existing Neon Marketplace integration in Singapore. That integration currently injects the legacy variable `BYAHEPANAY_DATABASE_URL`; the app now prefers `BIYAHEPANAY_DATABASE_URL` when present and falls back to the existing variable, so the database connection remains compatible during the rename.
 
 For a fresh database, run the complete `neon/schema.sql` file on the Neon SQL Editor. It creates the route, checkpoint, bus, trip, rider-session, and sighting tables, plus the five route variants and their initial checkpoint/ETA seed data.
 
@@ -52,7 +52,7 @@ npm run start
 
 ## GitHub and Vercel
 
-Repository: https://github.com/engrken/biyahepanay  
+Repository: https://github.com/engrken/byahepanay  
 Production branch: `main`  
 Vercel project: `biyahepanay` (team `kentbsece-7567`)
 
