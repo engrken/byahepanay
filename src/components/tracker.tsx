@@ -190,9 +190,10 @@ export default function Tracker() {
   }, [refreshBoard]);
 
   const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia, direction), [tab, kaliboVia, direction]);
-  const departureStartCheckpointId = selectedRoute.checkpoints.some((point) => point.id === startCheckpointId)
+  const startableCheckpoints = selectedRoute.checkpoints.slice(0, -1);
+  const departureStartCheckpointId = startableCheckpoints.some((point) => point.id === startCheckpointId)
     ? startCheckpointId
-    : selectedRoute.checkpoints[0]?.id ?? '';
+    : startableCheckpoints[0]?.id ?? '';
   const selectedBoardRoute = useMemo(
     () => board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute,
     [board.routes, selectedRoute],
@@ -706,7 +707,7 @@ export default function Tracker() {
               <div><div className="stat-label">Bus / Plate</div><div className="stat-value">{activeTrip.body_number || 'Not tagged'}{activeTrip.plate_number ? ` · ${activeTrip.plate_number}` : ''}</div></div>
               <div><div className="stat-label">Started at</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.start_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'Unknown checkpoint'}</div></div>
             <div><div className="stat-label">Start time</div><div className="stat-value">{formatTime(activeTrip.departure_at)}</div></div>
-              <div><div className="stat-label">Last confirmed</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}</div></div>
+              <div><div className="stat-label">Last confirmed</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'Unknown checkpoint'}</div></div>
               <div><div className="stat-label">Checkpoint time</div><div className="stat-value">{formatTime(activeTrip.last_checkpoint_at)}</div></div>
             </div>
             <div className="destination-window">
@@ -722,7 +723,7 @@ export default function Tracker() {
             </div>
 {timeline?.trackingLost && activeTrip.status === 'active' && <div className="notice tracking-lost" role="status">
               <strong>Tracking lost · ETA paused.</strong> No verified checkpoint confirmation for {timeline.minutesSinceCheckpoint} minutes.
-              Last confirmed at {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}.
+              Last confirmed at {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'the route start'}.
               This does not mean the bus arrived or was cancelled.
             </div>}
             {timeline?.confirmationOverdue && !timeline.trackingLost && timeline.nextCheckpoint && <div className="notice tracking-overdue" role="status">
@@ -785,14 +786,14 @@ export default function Tracker() {
           <div className="wait-guidance">{activeRoute.checkpoints.find((point) => point.id === waitStopId)?.name} · {waitingGuidance}</div>
         </section>}
 
-        <div className="section-label">Next 30-minute dispatch slots</div>
+        <div className="section-label">Projected follow-up intervals · unconfirmed</div>
         {activeTrip ? <div className="cadence-list">
           {cadence.map((slot) => <div className="cadence-item" key={slot.departureAt.toISOString()}>
             <div className="cadence-time">{formatTime(slot.departureAt)}</div>
             <div className="cadence-type">{slot.busType === 'aircon' ? 'Aircon · Deluxe' : 'Regular · Ordinary'}</div>
-            <div className="cadence-state">⚪ Scheduled · Unconfirmed</div>
+            <div className="cadence-state">⚪ Projection · Unconfirmed</div>
           </div>)}
-        </div> : <div className="card empty-trip"><p>Projected slots appear after an actual departure is logged as the cadence anchor. These are projections, not confirmed operator dispatches.</p></div>}
+        </div> : <div className="card empty-trip"><p>Follow-up intervals are projections from the first checkpoint observation, not official operator dispatch times.</p></div>}
 
         <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
@@ -830,7 +831,7 @@ export default function Tracker() {
             </optgroup>
           </select></div>
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-checkpoint">Where did you first see this bus?</label><select id="departure-checkpoint" value={departureStartCheckpointId} onChange={(event) => setStartCheckpointId(event.target.value)} required>
-            {selectedRoute.checkpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
+            {startableCheckpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
           </select><p className="verification-footnote">Choose the mapped roadside stop where you are watching. GPS must be within 300 m to verify the start.</p></div>
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-type">Bus type</label><select id="departure-type" value={departureType} onChange={(event) => setDepartureType(event.target.value as BusType)}><option value="aircon">Aircon · Deluxe</option><option value="ordinary">Regular · Ordinary</option></select></div>
           <div className="form-grid">
