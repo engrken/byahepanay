@@ -57,13 +57,12 @@ export async function POST(request: NextRequest) {
 
     const requestId = body.requestId;
     const rateSince = new Date(Date.now() - 2 * 60_000).toISOString();
-    const previousRequest = await sql`select s.id, t.id as trip_id, t.route_id, t.bus_type, t.departure_at, t.status, t.last_checkpoint_id, t.last_checkpoint_at, t.confidence_status, b.body_number, b.plate_number
+    const previousRequest = await sql`select s.id, s.spotter_id, t.id as trip_id, t.route_id, t.bus_type, t.departure_at, t.status, t.last_checkpoint_id, t.last_checkpoint_at, t.confidence_status, b.body_number, b.plate_number
       from public.sightings s join public.trips t on t.id = s.trip_id left join public.buses b on b.id = t.bus_id
-      where s.idempotency_key = ${requestId}::uuid limit 1`;
+      where s.idempotency_key = ${requestId}::uuid and s.kind = 'departure' limit 1`;
     if (previousRequest.length) {
-      const previous = previousRequest[0] as { id: string; trip_id: string; route_id: string; bus_type: string; departure_at: string; status: string; last_checkpoint_id: string | null; last_checkpoint_at: string | null; confidence_status: string; body_number: string | null; plate_number: string | null };
-      const identity = await sql`select spotter_id from public.sightings where id = ${previous.id}::uuid limit 1`;
-      if ((identity[0] as {spotter_id:string}|undefined)?.spotter_id !== spotterId) return jsonError('This request identifier was already used.', 409, 'IDEMPOTENCY_KEY_REUSED');
+      const previous = previousRequest[0] as { id: string; spotter_id: string; trip_id: string; route_id: string; bus_type: string; departure_at: string; status: string; last_checkpoint_id: string | null; last_checkpoint_at: string | null; confidence_status: string; body_number: string | null; plate_number: string | null };
+      if (previous.spotter_id !== spotterId) return jsonError('This request identifier was already used.', 409, 'IDEMPOTENCY_KEY_REUSED');
       return NextResponse.json({ trip: { id: previous.trip_id, route_id: previous.route_id, bus_type: previous.bus_type, departure_at: previous.departure_at, status: previous.status, last_checkpoint_id: previous.last_checkpoint_id, last_checkpoint_at: previous.last_checkpoint_at, confidence_status: previous.confidence_status, body_number: previous.body_number, plate_number: previous.plate_number }, duplicate: true });
     }
     const recentDeparture = await sql`

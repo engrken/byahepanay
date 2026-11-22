@@ -185,6 +185,7 @@ export async function POST(request: NextRequest) {
     const consensusUntil = new Date(observedAtDate.getTime() + RATE_LIMIT_MINUTES * 60_000).toISOString();
     const rateSince = new Date(receivedAt.getTime() - RATE_LIMIT_MINUTES * 60_000).toISOString();
     const transactionResults = await sql.transaction([
+      sql`select pg_advisory_xact_lock(hashtextextended(${spotterId}, 0))`,
       sql`select pg_advisory_xact_lock(hashtextextended(${trip.id}, 0))`,
       sql`with locked_trip as (select id from public.trips where id = ${trip.id}::uuid and status = 'active'
           and last_checkpoint_id is not distinct from ${trip.last_checkpoint_id}::uuid
@@ -220,8 +221,8 @@ export async function POST(request: NextRequest) {
           (select count(distinct spotter_id) from public.sightings where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid and observed_at between ${consensusSince}::timestamptz and ${consensusUntil}::timestamptz) as distinct_spotters
         from public.sightings s join public.trips t on t.id = s.trip_id where s.idempotency_key = ${requestId}::uuid and s.trip_id = ${trip.id}::uuid and s.spotter_id = ${spotterId}::uuid limit 1`
     ], { isolationLevel: 'ReadCommitted' });
-    const insertedRows = transactionResults[1] ?? [];
-    const outcome = (transactionResults[5] ?? [])[0] as { sighting_id: string; is_verified: boolean; status: string; distinct_spotters: number } | undefined;
+    const insertedRows = transactionResults[2] ?? [];
+    const outcome = (transactionResults[6] ?? [])[0] as { sighting_id: string; is_verified: boolean; status: string; distinct_spotters: number } | undefined;
     if (!outcome) {
       const recentTap = body.kind === 'roadside' ? await sql`select id from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'roadside' and created_at > ${rateSince}::timestamptz limit 1` : [];
       if (recentTap.length) return jsonError('One roadside report per secure browser session is allowed every 5 minutes.', 429, 'SPOTTER_RATE_LIMIT');

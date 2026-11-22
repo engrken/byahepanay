@@ -74,7 +74,7 @@ Pushes to `main` trigger a Vercel production deployment. Vercel injects the Neon
 
 Write APIs use a server-issued HMAC-signed HttpOnly browser-session cookie, same-origin validation, per-session rate limits, and stable idempotency keys. Sighting insertion, quorum evaluation, and trip progression are serialized per trip and committed in one database transaction. Offline reports preserve their idempotency key across retries.
 
-A signed anonymous browser session is not proof of a distinct human. One person can create multiple browser profiles; treat consensus as separate browser sessions, not verified commuters, until an anti-abuse challenge or verified accounts are introduced.
+On first launch after this upgrade, the app transfers any old browser UUID only for existing active trip creator/rider memberships, then removes it from local storage. A signed anonymous browser session is not proof of a distinct human. One person can create multiple browser profiles; treat consensus as separate browser sessions, not verified commuters, until an anti-abuse challenge or verified accounts are introduced.
 
 ## Live updates and offline behavior
 
