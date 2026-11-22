@@ -2,6 +2,16 @@ export type BusType = 'ordinary' | 'aircon';
 export type Confidence = 'scheduled' | 'unverified' | 'verified';
 export type CorridorTab = 'iloilo' | 'kalibo' | 'tapaz' | 'estancia';
 
+export interface CheckpointLandmark {
+  id: string;
+  checkpointCode: string;
+  name: string;
+  lat: number;
+  lng: number;
+  coordinateSource: 'owner_supplied_coordinates';
+  validationStatus: 'pending_field_validation' | 'field_verified';
+}
+
 export interface Checkpoint {
   id: string;
   code: string;
@@ -14,6 +24,7 @@ export interface Checkpoint {
   dwell_buffer_minutes?: number;
   calibrated_segment_minutes?: Partial<Record<BusType, number>>;
   calibration_sample_count?: Partial<Record<BusType, number>>;
+  landmarks?: CheckpointLandmark[];
 }
 
 export interface RouteDefinition {
