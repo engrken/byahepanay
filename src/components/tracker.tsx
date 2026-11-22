@@ -6,6 +6,7 @@ import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from
 import { nearestCheckpoint, formatDistance } from '@/lib/geo';
 import { MAX_NEAREST_STOP_DISTANCE_METERS } from '@/lib/presence';
 import OnboardingGuide from '@/components/onboarding-guide';
+import CommunityPresence from '@/components/community-presence';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
 import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
@@ -601,6 +602,7 @@ export default function Tracker() {
       </header>
 
       <div className="page-content" id="main-content">
+        <CommunityPresence />
         <section className="card verification-card" aria-labelledby="email-verification-title">
           <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="email-verification-title">Email verification</h2></div>{otpStatus.verified ? <span className="verified-pill">{otpStatus.verificationMethod === 'sms' ? '✓ Previously phone verified' : '✓ Email verified'}</span> : <span className="confidence unverified">Not verified</span>}</div>
           {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.emailMasked}. A verified email helps keep the same reporter identity across browser sessions.</p> : <>
