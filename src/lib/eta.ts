@@ -180,6 +180,7 @@ export function estimateLandmarkEta(
   checkpoints: Checkpoint[],
   timeline: TimelineEstimate,
   landmark: CheckpointLandmark,
+  now = new Date(),
 ): LandmarkEtaEstimate {
   const ordered = [...checkpoints].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
   const projection = projectLandmarkToRoute(landmark, ordered);
@@ -222,7 +223,7 @@ export function estimateLandmarkEta(
   return {
     status: 'estimated',
     eta,
-    minutesAway: Math.max(0, Math.ceil((etaMs - Date.now()) / MINUTE)),
+    minutesAway: Math.max(0, Math.ceil((etaMs - now.getTime()) / MINUTE)),
     distanceFromRouteMeters: projection.distanceMeters,
   };
 }
