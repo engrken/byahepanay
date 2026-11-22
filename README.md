@@ -100,3 +100,14 @@ Choose a corridor, then use **Use my location** or select a waiting stop. The ap
 - The server only honors `BYPASS_GEOFENCE=true` in local development (`NODE_ENV !== production`). Vercel Production and Preview always enforce the 300 m geofence; no browser-controlled test-mode bypass exists.
 
 **Important:** route timing offsets and GPS points are initial planning estimates. They are not operator-verified and must not be presented as live schedule guarantees. Browser GPS/background sync are best-effort, and anonymous crowdsourcing requires abuse monitoring before high-volume public launch.
+
+## Phone OTP and reporter integrity
+SMS verification uses Twilio Verify. Configure `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`, and `REQUIRE_PHONE_VERIFICATION=true` in Vercel only after a Twilio Verify service is provisioned and tested. Until the provider is configured, OTP is visibly unavailable and signed-session protections continue to operate. The app stores a keyed phone hash and masked number, never the raw number or OTP code.
+
+## Automatic ETA calibration
+Each checkpoint segment is calibrated separately by route and bus type. A sample is accepted only after at least two distinct OTP-verified phone identities confirm a checkpoint, both reports have GPS accuracy recorded, mean accuracy is at most 40 m, the route sequence is adjacent, and elapsed time is plausible. Calibrations use a rolling 90-day window, require eight quality-qualified samples, and use a median with median-absolute-deviation outlier rejection. The 80th percentile is retained for uncertainty reporting. Until a segment qualifies, the initial planning offset remains in use.
+
+## Operational monitoring and research metrics
+`/api/health` is the health probe. `/api/ops/metrics?days=30` returns aggregate daily report-quality and ETA calibration metrics; `/ops` is the visual dashboard. A Vercel Cron job calls `/api/ops/snapshot` every six hours using `CRON_SECRET`, stores historical aggregates, and opens/resolves alerts for slow database queries and stale active trips. No raw phone numbers or per-reporter identities are exposed in the dashboard.
+
+Calibration values are research estimates, not official schedules. Field-validate checkpoint coordinates and timestamps with Vallacar/Ceres permission before operational reliance.
