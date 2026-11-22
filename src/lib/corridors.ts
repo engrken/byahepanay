@@ -68,7 +68,7 @@ const trunk: readonly RouteStep[] = [
   ['pueblo', 0], ['lawaan', 4], ['bolo', 7], ['lanot', 11], ['lonoy', 17], ['ivisan', 23],
 ];
 
-export const ROUTES: RouteDefinition[] = [
+const OUTBOUND_ROUTES: RouteDefinition[] = [
   makeRoute('iloilo_passi', 'Roxas City → Iloilo via Passi', 'Iloilo · Passi', 'Tagbak Terminal', [
     ...trunk, ['sigma', 33], ['dao', 43], ['cuartero', 53], ['dumarao', 65], ['passi', 83, 8],
     ['duenas', 98], ['pototan', 110], ['zarraga', 125], ['leganes', 133], ['jaro', 143], ['tagbak', 150],
@@ -88,7 +88,54 @@ export const ROUTES: RouteDefinition[] = [
   ]),
 ];
 
-export function routeForTab(tab: 'iloilo' | 'kalibo' | 'tapaz' | 'estancia', kaliboVia: 'mambusao' | 'sapian' = 'mambusao') {
-  const id = tab === 'iloilo' ? 'iloilo_passi' : tab === 'tapaz' ? 'tapaz' : tab === 'estancia' ? 'estancia' : `kalibo_${kaliboVia}`;
+const RETURN_LABELS: Record<string, { name: string; short_name: string }> = {
+  iloilo_passi: { name: 'Iloilo → Roxas City via Passi', short_name: 'Iloilo · Passi → Roxas' },
+  kalibo_mambusao: { name: 'Kalibo → Roxas City via Mambusao', short_name: 'Kalibo · Mambusao → Roxas' },
+  kalibo_sapian: { name: 'Kalibo → Roxas City via Sapian', short_name: 'Kalibo · Sapian → Roxas' },
+  tapaz: { name: 'Calinog → Roxas City via Tapaz', short_name: 'Tapaz → Roxas' },
+  estancia: { name: 'Estancia → Roxas City', short_name: 'Estancia → Roxas' },
+};
+
+function reverseRoute(route: RouteDefinition): RouteDefinition {
+  const reversed = [...route.checkpoints].reverse();
+  let elapsed = 0;
+  const checkpoints = reversed.map((checkpoint, index) => {
+    const previousOutboundCheckpoint = index === 0 ? null : route.checkpoints[route.checkpoints.length - index];
+    const segment = previousOutboundCheckpoint?.segment_minutes ?? 0;
+    if (previousOutboundCheckpoint) {
+      elapsed += segment + (previousOutboundCheckpoint.dwell_buffer_minutes ?? 0);
+    }
+    return {
+      ...checkpoint,
+      sequence: index,
+      eta_offset_minutes: elapsed,
+      segment_minutes: segment,
+      // Outbound calibration samples must not be reused in the opposite direction.
+      calibrated_segment_minutes: undefined,
+      calibration_sample_count: undefined,
+    };
+  });
+  const label = RETURN_LABELS[route.id];
+  return {
+    id: `${route.id}_return`,
+    name: label.name,
+    short_name: label.short_name,
+    destination: 'Pueblo de Panay Terminal',
+    checkpoints,
+  };
+}
+
+export const ROUTES: RouteDefinition[] = [
+  ...OUTBOUND_ROUTES,
+  ...OUTBOUND_ROUTES.map(reverseRoute),
+];
+
+export function routeForTab(
+  tab: 'iloilo' | 'kalibo' | 'tapaz' | 'estancia',
+  kaliboVia: 'mambusao' | 'sapian' = 'mambusao',
+  direction: 'outbound' | 'inbound' = 'outbound',
+) {
+  const baseId = tab === 'iloilo' ? 'iloilo_passi' : tab === 'tapaz' ? 'tapaz' : tab === 'estancia' ? 'estancia' : `kalibo_${kaliboVia}`;
+  const id = direction === 'inbound' ? `${baseId}_return` : baseId;
   return ROUTES.find((route) => route.id === id) ?? ROUTES[0];
 }
