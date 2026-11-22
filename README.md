@@ -24,7 +24,8 @@ For local development, copy `.env.example` to `.env.local` and set a pooled Neon
 
 ```dotenv
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
-NEXT_PUBLIC_TEST_MODE=true
+SPOTTER_SESSION_SECRET=replace-with-a-random-secret-of-at-least-32-characters
+BYPASS_GEOFENCE=true
 ```
 
 On Vercel, the Marketplace integration provides `BYAHEPANAY_DATABASE_URL`, which the server uses automatically. Do not commit real database credentials.
@@ -69,6 +70,12 @@ Pushes to `main` trigger a Vercel production deployment. Vercel injects the Neon
 | `/api/trips/:id/join` | POST | Join Rider Beacon mode |
 | `/api/trips/:id/status` | POST | Rider status update |
 
+## Reporting security
+
+Write APIs use a server-issued HMAC-signed HttpOnly browser-session cookie, same-origin validation, per-session rate limits, and stable idempotency keys. Sighting insertion, quorum evaluation, and trip progression are serialized per trip and committed in one database transaction. Offline reports preserve their idempotency key across retries.
+
+A signed anonymous browser session is not proof of a distinct human. One person can create multiple browser profiles; treat consensus as separate browser sessions, not verified commuters, until an anti-abuse challenge or verified accounts are introduced.
+
 ## Live updates and offline behavior
 
 The app refreshes the Neon-backed board every 10 seconds while the page is visible and when the user returns to the tab. Offline roadside sightings remain in IndexedDB and are retried when connectivity returns. Neon Realtime is not enabled in this database at the moment.
@@ -90,6 +97,6 @@ Choose a corridor, then use **Use my location** or select a waiting stop. The ap
 - Test geofence rejection, speed rejection (>95 km/h), stale/out-of-order reports, two-spotter consensus, and Rider Beacon (20–90 km/h).
 - Test the offline queue by submitting with airplane mode enabled and reconnecting.
 - Test Add to Home Screen, offline launch, iOS Safari, Wake Lock support, and battery impact.
-- Set `NEXT_PUBLIC_TEST_MODE=false` before real public use. Test mode currently skips only the 300 m geofence; speed, route, consensus, and browser-session checks remain active.
+- The server only honors `BYPASS_GEOFENCE=true` in local development (`NODE_ENV !== production`). Vercel Production and Preview always enforce the 300 m geofence; no browser-controlled test-mode bypass exists.
 
 **Important:** route timing offsets and GPS points are initial planning estimates. They are not operator-verified and must not be presented as live schedule guarantees. Browser GPS/background sync are best-effort, and anonymous crowdsourcing requires abuse monitoring before high-volume public launch.

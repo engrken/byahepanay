@@ -8,31 +8,16 @@ import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type Queue
 import type { BoardData, BusType, Checkpoint, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
-const TEST_MODE = process.env.NEXT_PUBLIC_TEST_MODE === 'true';
-
 type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;
 
-let ephemeralSpotterId: string | null = null;
-
-function getSpotterId() {
-  if (typeof window === 'undefined') return '';
-  const key = 'byahepanay-spotter-id';
-  try {
-    const stored = window.localStorage.getItem(key);
-    if (stored) return stored;
-  } catch { /* Private browsing may deny storage; retain a page-session identifier below. */ }
-  if (!ephemeralSpotterId) {
-    ephemeralSpotterId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-        const random = Math.random() * 16 | 0;
-        return (character === 'x' ? random : (random & 0x3 | 0x8)).toString(16);
-      });
-  }
-  try { window.localStorage.setItem(key, ephemeralSpotterId); } catch { /* Keep the identifier in memory for this page session. */ }
-  return ephemeralSpotterId;
+async function ensureSpotterSession() {
+  const response = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) { const result = await response.json().catch(() => ({})) as { error?: string }; throw new Error(result.error ?? 'Could not initialize a secure reporting session.'); }
 }
-
+function createRequestId() {
+  if (!globalThis.crypto?.randomUUID) throw new Error('This browser cannot create secure report identifiers.');
+  return globalThis.crypto.randomUUID();
+}
 function routeMatchesTab(routeId: string, tab: CorridorTab) {
   if (tab === 'kalibo') return routeId === 'kalibo_mambusao' || routeId === 'kalibo_sapian';
   if (tab === 'iloilo') return routeId === 'iloilo_passi';
@@ -141,6 +126,7 @@ export default function Tracker() {
       const cached = window.localStorage.getItem('byahepanay-board-cache');
       if (cached) setBoard(JSON.parse(cached) as BoardData);
     } catch { /* Ignore invalid or unavailable local cache. */ }
+    void ensureSpotterSession().catch(() => setMessage({ kind: 'warning', text: 'Secure reporting is unavailable until a session can be initialized.' }));
     void refreshBoard();
     void getQueuedSightingCount().then(setQueuedCount);
     if ('serviceWorker' in navigator) {
@@ -234,34 +220,19 @@ export default function Tracker() {
     : null;
   const cadence = activeTrip ? projectCadence(activeTrip.departure_at, activeTrip.bus_type, 3) : [];
 
-  const submitSighting = useCallback(async (payload: Omit<QueuedSighting, 'queuedAt'>) => {
+  const submitSighting = useCallback(async (payload: Omit<QueuedSighting, 'queuedAt' | 'requestId' | 'spotterId'>) => {
+    const report: QueuedSighting = { ...payload, requestId: createRequestId(), queuedAt: new Date().toISOString() };
     try {
-      const response = await fetch('/api/sightings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      });
+      await ensureSpotterSession();
+      const response = await fetch('/api/sightings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(report) });
       const result = await response.json().catch(() => ({})) as { error?: string; verified?: boolean; message?: string; checkpoint?: string };
-      if (!response.ok) {
-        setMessage({ kind: 'error', text: result.error ?? 'This sighting could not be accepted.' });
-        return false;
-      }
-      setMessage({
-        kind: result.verified ? 'success' : 'warning',
-        text: result.message ?? (result.verified ? `${result.checkpoint} verified.` : `${result.checkpoint} reported; awaiting confirmation.`),
-      });
-      await refreshBoard();
-      return true;
+      if (!response.ok) { setMessage({ kind: 'error', text: result.error ?? 'This sighting could not be accepted.' }); return false; }
+      setMessage({ kind: result.verified ? 'success' : 'warning', text: result.message ?? (result.verified ? `${result.checkpoint} verified.` : `${result.checkpoint} reported; awaiting confirmation.`) });
+      await refreshBoard(); return true;
     } catch {
-      const queued: QueuedSighting = { ...payload, queuedAt: new Date().toISOString() };
-      try {
-        await enqueueSighting(queued);
-        const count = await getQueuedSightingCount();
-        setQueuedCount(count);
-        setMessage({ kind: 'info', text: 'No signal. Sighting saved on this phone and will sync when your connection returns.' });
-        return true;
-      } catch {
-        setMessage({ kind: 'error', text: 'No connection and local storage is unavailable. The sighting was not saved.' });
-        return false;
-      }
+      try { await enqueueSighting(report); const count = await getQueuedSightingCount(); setQueuedCount(count);
+        setMessage({ kind: 'info', text: 'No signal. Sighting saved on this phone and will sync when your connection returns.' }); return true;
+      } catch { setMessage({ kind: 'error', text: 'No connection and local storage is unavailable. The sighting was not saved.' }); return false; }
     }
   }, [refreshBoard]);
 
@@ -302,9 +273,10 @@ export default function Tracker() {
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 });
       });
+      await ensureSpotterSession();
       const response = await fetch('/api/departures', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ routeId: selectedRoute.id, busType: departureType, spotterId: getSpotterId(), bodyNumber: departureBody.trim() || undefined, plateNumber: departurePlate.trim() || undefined, lat: position.coords.latitude, lng: position.coords.longitude }),
+        body: JSON.stringify({ requestId: createRequestId(), routeId: selectedRoute.id, busType: departureType,  bodyNumber: departureBody.trim() || undefined, plateNumber: departurePlate.trim() || undefined, lat: position.coords.latitude, lng: position.coords.longitude }),
       });
       const result = await response.json().catch(() => ({})) as { error?: string; trip?: Trip };
       if (!response.ok) throw new Error(result.error ?? 'Could not log departure.');
@@ -341,8 +313,7 @@ export default function Tracker() {
         setMessage({ kind: 'error', text: 'No checkpoint coordinates are available for this corridor.' });
         return;
       }
-      const threshold = TEST_MODE ? Number.POSITIVE_INFINITY : 300;
-      if (nearest.distanceMeters > threshold) {
+      if (nearest.distanceMeters > 300) {
         setBusy(false);
         setMessage({ kind: 'error', text: `Nearest stop is ${nearest.checkpoint.name}, ${formatDistance(nearest.distanceMeters)} away. Move within 300 m of a mapped checkpoint to report.` });
         return;
@@ -350,7 +321,7 @@ export default function Tracker() {
       const sent = await submitSighting({
         tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
         lat: position.coords.latitude, lng: position.coords.longitude,
-        kind: 'roadside', spotterId: getSpotterId(),
+        kind: 'roadside', 
       });
       if (sent) setWaitStopId(nearest.checkpoint.id);
       setBusy(false);
@@ -381,8 +352,9 @@ export default function Tracker() {
     if (!activeTrip) return;
     setBusy(true);
     try {
+      await ensureSpotterSession();
       const response = await fetch(`/api/trips/${activeTrip.id}/tag`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bodyNumber: tagBody, plateNumber: tagPlate, spotterId: getSpotterId() }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bodyNumber: tagBody, plateNumber: tagPlate,  }),
       });
       const result = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Unable to tag bus.');
@@ -397,8 +369,9 @@ export default function Tracker() {
   const updateRiderStatus = async (status: string) => {
     if (!activeTrip) return;
     try {
+      await ensureSpotterSession();
       const response = await fetch(`/api/trips/${activeTrip.id}/status`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, spotterId: getSpotterId() }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status,  }),
       });
       if (!response.ok) throw new Error('Status update failed.');
       setMessage({ kind: 'success', text: `Rider update sent: ${status.replaceAll('_', ' ')}.` });
@@ -434,7 +407,7 @@ export default function Tracker() {
         const sent = await submitSighting({
           tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
           lat: position.coords.latitude, lng: position.coords.longitude,
-          kind: 'rider_beacon', spotterId: getSpotterId(),
+          kind: 'rider_beacon', 
         });
         if (sent && mounted) {
           lastBeaconCheckpointRef.current = nearest.checkpoint.id;
@@ -468,8 +441,9 @@ export default function Tracker() {
     }
     setBusy(true);
     try {
+      await ensureSpotterSession();
       const response = await fetch(`/api/trips/${activeTrip.id}/join`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spotterId: getSpotterId() }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({  }),
       });
       const result = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(result.error ?? 'Could not join Rider Beacon mode.');
@@ -602,7 +576,6 @@ export default function Tracker() {
           </div>}
         </section>
 
-        {TEST_MODE && <div className="notice" style={{ marginTop: 12 }}>🧪 Test mode is ON: the server skips the 300 m GPS geofence only. Speed, route, and consensus checks still apply.</div>}
         {!loading && !board.configured && <div className="notice info">Demo shell: connect Neon and apply <code>neon/schema.sql</code> to enable live trips and crowd reports.</div>}
         <ErrorNotice message={message} />
         {queuedCount > 0 && <div className="notice info">📶 {queuedCount} sighting{queuedCount === 1 ? '' : 's'} saved offline · will retry when signal returns.</div>}

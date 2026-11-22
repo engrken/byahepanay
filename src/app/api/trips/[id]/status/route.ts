@@ -1,30 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { adminUnavailable, jsonError, isUuid } from '@/lib/http';
+import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
+import { getSpotterSessionId } from '@/lib/spotter-session';
 
 export const dynamic = 'force-dynamic';
 const ALLOWED = ['seats_available', 'standing_only', 'stopped_cargo_traffic_10m', 'mechanical_breakdown', 'moving'];
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  if (!isSameOriginRequest(request)) return jsonError('Cross-origin write requests are not allowed.', 403, 'CROSS_SITE_REQUEST');
+  const spotterId = getSpotterSessionId(request);
+  if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
   const { id } = await context.params;
   if (!isUuid(id)) return jsonError('Invalid trip identifier.');
-  let body: { status?: string; spotterId?: string };
+  let body: { status?: string };
   try { body = await request.json(); } catch { return jsonError('Invalid JSON request body.'); }
   if (!body.status || !ALLOWED.includes(body.status)) return jsonError('Choose a supported rider status.');
-  if (!isUuid(body.spotterId)) return jsonError('Missing browser session identity.');
 
   try {
     const session = await sql`
       select trip_id from public.trip_rider_sessions
-      where trip_id = ${id}::uuid and spotter_id = ${body.spotterId}::uuid limit 1
+      where trip_id = ${id}::uuid and spotter_id = ${spotterId}::uuid limit 1
     `;
     if (!session.length) return jsonError('Join Rider Beacon mode before posting a passenger status.', 403);
     const updatedAt = new Date().toISOString();
     await sql`
       update public.trip_rider_sessions set last_seen_at = ${updatedAt}::timestamptz
-      where trip_id = ${id}::uuid and spotter_id = ${body.spotterId}::uuid
+      where trip_id = ${id}::uuid and spotter_id = ${spotterId}::uuid
     `;
     const updated = await sql`
       update public.trips set rider_status = ${body.status}, rider_status_at = ${updatedAt}::timestamptz

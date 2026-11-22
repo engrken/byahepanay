@@ -4,7 +4,9 @@ export interface QueuedSighting {
   lat: number;
   lng: number;
   kind: 'roadside' | 'rider_beacon';
-  spotterId: string;
+  requestId?: string;
+  /** Legacy queue records may include this untrusted value; server ignores it. */
+  spotterId?: string;
   riderStatus?: string;
   queuedAt: string;
 }
@@ -56,48 +58,28 @@ export async function getQueuedSightingCount(): Promise<number> {
 
 export async function flushSightingQueue(): Promise<{ sent: number; remaining: number }> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { sent: 0, remaining: await getQueuedSightingCount() };
-  const db = await openQueueDb();
-  const entries = await new Promise<Array<QueuedSighting & { queueId: number }>>((resolve, reject) => {
-    const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
-    request.onsuccess = () => resolve(request.result as Array<QueuedSighting & { queueId: number }>);
-    request.onerror = () => reject(request.error);
-  });
-  let sent = 0;
-  for (const entry of entries) {
-    let response: Response;
-    try {
-      const { queueId, ...payload } = entry;
-      response = await fetch('/api/sightings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, observedAt: entry.queuedAt }),
-      });
-    } catch {
-      break;
+  const db = await openQueueDb(); let sent = 0;
+  try {
+    const sessionResponse = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
+    if (!sessionResponse.ok) return { sent: 0, remaining: await getQueuedSightingCount() };
+    const entries = await new Promise<Array<QueuedSighting & { queueId: number }>>((resolve, reject) => {
+      const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
+      request.onsuccess = () => resolve(request.result as Array<QueuedSighting & { queueId: number }>); request.onerror = () => reject(request.error);
+    });
+    for (const entry of entries) {
+      if (!entry.requestId) { entry.requestId = crypto.randomUUID(); await new Promise<void>((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).put(entry);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);}); }
+      let response: Response;
+      try { response = await fetch('/api/sightings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ tripId: entry.tripId, checkpointId: entry.checkpointId, lat: entry.lat, lng: entry.lng, kind: entry.kind, requestId: entry.requestId, riderStatus: entry.riderStatus, observedAt: entry.queuedAt }) }); } catch { break; }
+      if (response.ok) { await deleteQueuedRecord(db, entry.queueId); sent += 1; }
+      else if (response.status >= 400 && response.status < 500 && response.status !== 429) await deleteQueuedRecord(db, entry.queueId);
+      else break;
     }
-    if (response.ok) {
-      await deleteQueuedRecord(db, entry.queueId);
-      sent += 1;
-    } else if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-      // A permanently invalid/off-route report should not poison every later sync attempt.
-      await deleteQueuedRecord(db, entry.queueId);
-    } else {
-      break;
-    }
-  }
-  db.close();
+  } finally { db.close(); }
   return { sent, remaining: await getQueuedSightingCount() };
 }
-
 function deleteQueuedRecord(db: IDBDatabase, queueId: number) {
-  return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).delete(queueId);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  return new Promise<void>((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).delete(queueId);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
 }
-
 function requestBackgroundSync() {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
   void navigator.serviceWorker.ready.then((registration) => {

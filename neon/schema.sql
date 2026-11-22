@@ -53,6 +53,7 @@ create table if not exists public.trip_rider_sessions (
 create table if not exists public.sightings (
   id uuid primary key default gen_random_uuid(), trip_id uuid not null references public.trips(id) on delete cascade,
   checkpoint_id uuid not null references public.checkpoints(id), spotter_id uuid not null,
+  idempotency_key uuid not null default gen_random_uuid(),
   kind text not null check (kind in ('departure', 'roadside', 'rider_beacon')),
   lat double precision not null, lng double precision not null,
   distance_meters double precision not null default 0, implied_speed_kmh double precision,
@@ -65,6 +66,7 @@ create table if not exists public.sightings (
 create index if not exists route_checkpoints_route_sequence_idx on public.route_checkpoints(route_id, sequence);
 create index if not exists trips_active_route_departure_idx on public.trips(route_id, departure_at desc) where status = 'active';
 create index if not exists trips_updated_at_idx on public.trips(updated_at desc);
+create unique index if not exists sightings_idempotency_key_uidx on public.sightings(idempotency_key);
 create index if not exists sightings_trip_checkpoint_time_idx on public.sightings(trip_id, checkpoint_id, created_at desc);
 create index if not exists sightings_trip_checkpoint_observed_idx on public.sightings(trip_id, checkpoint_id, observed_at desc);
 create index if not exists sightings_spotter_kind_time_idx on public.sightings(spotter_id, kind, created_at desc);

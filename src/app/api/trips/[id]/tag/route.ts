@@ -1,17 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { adminUnavailable, jsonError, isUuid } from '@/lib/http';
+import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
+import { getSpotterSessionId } from '@/lib/spotter-session';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  if (!isSameOriginRequest(request)) return jsonError('Cross-origin write requests are not allowed.', 403, 'CROSS_SITE_REQUEST');
+  const spotterId = getSpotterSessionId(request);
+  if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
   const { id } = await context.params;
   if (!isUuid(id)) return jsonError('Invalid trip identifier.');
-  let body: { bodyNumber?: string; plateNumber?: string; spotterId?: string };
+  let body: { bodyNumber?: string; plateNumber?: string };
   try { body = await request.json(); } catch { return jsonError('Invalid JSON request body.'); }
-  if (!isUuid(body.spotterId)) return jsonError('Missing browser session identity.');
 
   const bodyNumber = body.bodyNumber?.trim();
   const plateNumber = body.plateNumber?.trim() || null;
@@ -25,7 +28,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     ]);
     const owner = ownerRows[0] as { spotter_id: string } | undefined;
     const trip = tripRows[0] as { id: string; bus_type: 'ordinary' | 'aircon' } | undefined;
-    if (!trip || !owner || owner.spotter_id !== body.spotterId) {
+    if (!trip || !owner || owner.spotter_id !== spotterId) {
       return jsonError('Only the browser session that logged this departure can attach a bus tag.', 403);
     }
 

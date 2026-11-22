@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { haversineKm } from '@/lib/geo';
-import { adminUnavailable, jsonError, isUuid } from '@/lib/http';
+import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
+import { getSpotterSessionId } from '@/lib/spotter-session';
 
 export const dynamic = 'force-dynamic';
 const MAX_GEOFENCE_METERS = 300;
@@ -10,7 +11,7 @@ const RATE_LIMIT_MINUTES = 5;
 
 interface SightingPayload {
   tripId?: string; checkpointId?: string; lat?: number; lng?: number;
-  kind?: 'roadside' | 'rider_beacon'; spotterId?: string; riderStatus?: string; observedAt?: string;
+  kind?: 'roadside' | 'rider_beacon'; requestId?: string; riderStatus?: string; observedAt?: string;
 }
 type TripRow = {
   id: string; route_id: string; bus_type: 'ordinary' | 'aircon'; departure_at: string;
@@ -44,6 +45,9 @@ function reclassifyRoute(code: string, currentRoute: string, candidateRoute: str
 }
 
 export async function POST(request: NextRequest) {
+  if (!isSameOriginRequest(request)) return jsonError('Cross-origin write requests are not allowed.', 403, 'CROSS_SITE_REQUEST');
+  const spotterId = getSpotterSessionId(request);
+  if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
 
@@ -56,13 +60,21 @@ export async function POST(request: NextRequest) {
     return jsonError('A valid GPS latitude and longitude are required.');
   }
   if (body.kind !== 'roadside' && body.kind !== 'rider_beacon') return jsonError('Unknown sighting type.');
-  if (!isUuid(body.spotterId)) return jsonError('A valid browser session identifier is required.');
+  if (!isUuid(body.requestId)) return jsonError('A unique request identifier is required.');
+  const allowedRiderStatuses = ['seats_available', 'standing_only', 'stopped_cargo_traffic_10m', 'mechanical_breakdown', 'moving'];
+  if (body.riderStatus !== undefined && !allowedRiderStatuses.includes(body.riderStatus)) return jsonError('Choose a supported rider status.');
 
   const tripId = body.tripId;
   const checkpointId = body.checkpointId;
-  const spotterId = body.spotterId;
+  const requestId = body.requestId;
 
   try {
+    const duplicateRows = await sql`select id, trip_id, checkpoint_id, spotter_id, is_verified, confidence_status from public.sightings where idempotency_key = ${requestId}::uuid limit 1`;
+    if (duplicateRows.length) {
+      const duplicate = duplicateRows[0] as { id: string; trip_id: string; checkpoint_id: string; spotter_id: string; is_verified: boolean; confidence_status: string };
+      if (duplicate.trip_id !== tripId || duplicate.checkpoint_id !== checkpointId || duplicate.spotter_id !== spotterId) return jsonError('This request identifier was already used for another report.', 409, 'IDEMPOTENCY_KEY_REUSED');
+      return NextResponse.json({ sightingId: duplicate.id, verified: duplicate.is_verified, confidence: duplicate.confidence_status, duplicate: true, message: 'This report was already received.' });
+    }
     const [tripRows, checkpointRows] = await Promise.all([
       sql`select id, route_id, bus_type, departure_at, status, last_checkpoint_id, last_checkpoint_at,
                  last_lat, last_lng, route_locked, route_candidate
@@ -82,17 +94,13 @@ export async function POST(request: NextRequest) {
       if (!riderSession.length) {
         return jsonError('Join Rider Beacon mode on this trip before sending beacon pings.', 403, 'RIDER_SESSION_REQUIRED');
       }
-      await sql`
-        update public.trip_rider_sessions set last_seen_at = now()
-        where trip_id = ${trip.id}::uuid and spotter_id = ${spotterId}::uuid
-      `;
     }
 
-    const testMode = process.env.NEXT_PUBLIC_TEST_MODE === 'true';
+    const allowLocalGeofenceBypass = process.env.NODE_ENV !== 'production' && process.env.BYPASS_GEOFENCE === 'true';
     const distanceMeters = haversineKm(
       { lat: body.lat, lng: body.lng }, { lat: checkpoint.lat, lng: checkpoint.lng },
     ) * 1000;
-    if (!testMode && distanceMeters > MAX_GEOFENCE_METERS) {
+    if (!allowLocalGeofenceBypass && distanceMeters > MAX_GEOFENCE_METERS) {
       return jsonError(
         `GPS is ${Math.round(distanceMeters)} m from ${checkpoint.name}; sightings must be within ${MAX_GEOFENCE_METERS} m.`,
         422, 'OUTSIDE_GEOFENCE',
@@ -169,86 +177,62 @@ export async function POST(request: NextRequest) {
     const nowIso = receivedAt.toISOString();
     const observedAtIso = observedAtDate.toISOString();
 
-    const inserted = await sql`
-      insert into public.sightings (
-        trip_id, checkpoint_id, spotter_id, kind, lat, lng, distance_meters, implied_speed_kmh,
-        is_verified, confidence_status, rider_status, observed_at, verified_at
-      )
-      values (
-        ${trip.id}::uuid, ${checkpoint.id}::uuid, ${spotterId}::uuid, ${body.kind},
-        ${body.lat}, ${body.lng}, ${Math.round(distanceMeters * 10) / 10},
-        ${impliedSpeedKmh === null ? null : Math.round(impliedSpeedKmh * 10) / 10},
-        ${beaconMovingAtHighwaySpeed}, ${beaconMovingAtHighwaySpeed ? 'verified' : 'unverified'},
-        ${body.riderStatus ?? null}, ${observedAtIso}::timestamptz,
-        ${beaconMovingAtHighwaySpeed ? nowIso : null}::timestamptz
-      )
-      returning id
-    `;
-    const sightingId = (inserted[0] as { id: string } | undefined)?.id;
-    if (!sightingId) return jsonError('Could not save sighting.', 500);
-
+    const routeUpdate = !trip.route_locked ? reclassifyRoute(checkpoint.code, trip.route_id, trip.route_candidate) : { routeId: trip.route_id, locked: true, candidate: trip.route_candidate };
+    const finalRows = await sql`select checkpoint_id from public.route_checkpoints where route_id = ${routeUpdate.routeId} order by sequence desc limit 1`;
+    const finalCheckpoint = finalRows[0] as { checkpoint_id: string } | undefined;
+    const tripArrived = finalCheckpoint?.checkpoint_id === checkpoint.id;
     const consensusSince = new Date(observedAtDate.getTime() - RATE_LIMIT_MINUTES * 60_000).toISOString();
     const consensusUntil = new Date(observedAtDate.getTime() + RATE_LIMIT_MINUTES * 60_000).toISOString();
-    const recentReports = await sql`
-      select distinct spotter_id from public.sightings
-      where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid
-        and observed_at >= ${consensusSince}::timestamptz
-        and observed_at <= ${consensusUntil}::timestamptz
-    `;
-    const distinctSpotters = recentReports.length;
-    const consensusVerified = distinctSpotters >= 2;
-    const verified = beaconMovingAtHighwaySpeed || consensusVerified;
-
-    if (verified) {
-      await sql`
-        update public.sightings
-        set is_verified = true, confidence_status = 'verified', verified_at = ${nowIso}::timestamptz
+    const rateSince = new Date(receivedAt.getTime() - RATE_LIMIT_MINUTES * 60_000).toISOString();
+    const transactionResults = await sql.transaction([
+      sql`select pg_advisory_xact_lock(hashtextextended(${trip.id}, 0))`,
+      sql`with locked_trip as (select id from public.trips where id = ${trip.id}::uuid and status = 'active'
+          and last_checkpoint_id is not distinct from ${trip.last_checkpoint_id}::uuid
+          and last_checkpoint_at is not distinct from ${trip.last_checkpoint_at}::timestamptz for update)
+        insert into public.sightings (trip_id, checkpoint_id, spotter_id, kind, lat, lng, distance_meters, implied_speed_kmh, is_verified, confidence_status, rider_status, observed_at, verified_at, idempotency_key)
+        select ${trip.id}::uuid, ${checkpoint.id}::uuid, ${spotterId}::uuid, ${body.kind}, ${body.lat}, ${body.lng}, ${Math.round(distanceMeters * 10) / 10},
+          ${impliedSpeedKmh === null ? null : Math.round(impliedSpeedKmh * 10) / 10}, false, 'unverified', ${body.riderStatus ?? null}, ${observedAtIso}::timestamptz, null, ${requestId}::uuid
+        from locked_trip where (${body.kind !== 'roadside'}::boolean or not exists (select 1 from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'roadside' and created_at > ${rateSince}::timestamptz))
+        on conflict (idempotency_key) do nothing returning id`,
+      sql`update public.sightings set is_verified = true, confidence_status = 'verified', verified_at = ${nowIso}::timestamptz
         where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid
-          and observed_at >= ${consensusSince}::timestamptz
-          and observed_at <= ${consensusUntil}::timestamptz
-      `;
-    }
-
-    const routeUpdate = !trip.route_locked
-      ? reclassifyRoute(checkpoint.code, trip.route_id, trip.route_candidate)
-      : { routeId: trip.route_id, locked: true, candidate: trip.route_candidate };
-
-    let tripArrived = false;
-    if (verified) {
-      const finalRows = await sql`
-        select checkpoint_id from public.route_checkpoints
-        where route_id = ${routeUpdate.routeId} order by sequence desc limit 1
-      `;
-      const finalCheckpoint = finalRows[0] as { checkpoint_id: string } | undefined;
-      tripArrived = finalCheckpoint?.checkpoint_id === checkpoint.id;
-
-      await sql`
-        update public.trips
-        set route_id = ${routeUpdate.routeId}, route_locked = ${routeUpdate.locked},
-            route_candidate = ${routeUpdate.candidate}, last_checkpoint_id = ${checkpoint.id}::uuid,
-            last_checkpoint_at = ${observedAtIso}::timestamptz, last_lat = ${body.lat}, last_lng = ${body.lng},
-            confidence_status = 'verified', pending_checkpoint_id = null, pending_reported_at = null,
+          and observed_at between ${consensusSince}::timestamptz and ${consensusUntil}::timestamptz
+          and (${beaconMovingAtHighwaySpeed}::boolean or (select count(distinct spotter_id) from public.sightings where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid and observed_at between ${consensusSince}::timestamptz and ${consensusUntil}::timestamptz) >= 2)`,
+      sql`update public.trip_rider_sessions set last_seen_at = ${nowIso}::timestamptz where trip_id = ${trip.id}::uuid and spotter_id = ${spotterId}::uuid and ${body.kind === 'rider_beacon'}::boolean`,
+      sql`update public.trips
+        set route_id = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${routeUpdate.routeId} else route_id end,
+            route_locked = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${routeUpdate.locked} else route_locked end,
+            route_candidate = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${routeUpdate.candidate} else route_candidate end,
+            last_checkpoint_id = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${checkpoint.id}::uuid else last_checkpoint_id end,
+            last_checkpoint_at = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${observedAtIso}::timestamptz else last_checkpoint_at end,
+            last_lat = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${body.lat} else last_lat end,
+            last_lng = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then ${body.lng} else last_lng end,
+            confidence_status = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then 'verified' else 'unverified' end,
+            pending_checkpoint_id = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then null else ${checkpoint.id}::uuid end,
+            pending_reported_at = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) then null else ${observedAtIso}::timestamptz end,
             rider_status = coalesce(${body.riderStatus ?? null}, rider_status),
-            rider_status_at = case when ${body.riderStatus ?? null}::text is null
-              then rider_status_at else ${nowIso}::timestamptz end,
-            status = ${tripArrived ? 'arrived' : 'active'}
-        where id = ${trip.id}::uuid
-      `;
-    } else {
-      await sql`
-        update public.trips
-        set confidence_status = 'unverified', pending_checkpoint_id = ${checkpoint.id}::uuid,
-            pending_reported_at = ${observedAtIso}::timestamptz
-        where id = ${trip.id}::uuid
-      `;
+            rider_status_at = case when ${body.riderStatus ?? null}::text is null then rider_status_at else ${nowIso}::timestamptz end,
+            status = case when exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and is_verified) and ${tripArrived}::boolean then 'arrived' else status end
+        where id = ${trip.id}::uuid and status = 'active' and last_checkpoint_id is not distinct from ${trip.last_checkpoint_id}::uuid
+          and last_checkpoint_at is not distinct from ${trip.last_checkpoint_at}::timestamptz
+          and exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid and trip_id = ${trip.id}::uuid and spotter_id = ${spotterId}::uuid)`,
+      sql`select s.id as sighting_id, s.is_verified, t.status,
+          (select count(distinct spotter_id) from public.sightings where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid and observed_at between ${consensusSince}::timestamptz and ${consensusUntil}::timestamptz) as distinct_spotters
+        from public.sightings s join public.trips t on t.id = s.trip_id where s.idempotency_key = ${requestId}::uuid and s.trip_id = ${trip.id}::uuid and s.spotter_id = ${spotterId}::uuid limit 1`
+    ], { isolationLevel: 'ReadCommitted' });
+    const insertedRows = transactionResults[1] ?? [];
+    const outcome = (transactionResults[5] ?? [])[0] as { sighting_id: string; is_verified: boolean; status: string; distinct_spotters: number } | undefined;
+    if (!outcome) {
+      const recentTap = body.kind === 'roadside' ? await sql`select id from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'roadside' and created_at > ${rateSince}::timestamptz limit 1` : [];
+      if (recentTap.length) return jsonError('One roadside report per secure browser session is allowed every 5 minutes.', 429, 'SPOTTER_RATE_LIMIT');
+      return jsonError('The trip changed while this report was being checked. Refresh the board and try again.', 409, 'CONCURRENT_TRIP_UPDATE');
     }
+    const verified = outcome.is_verified === true; const distinctSpotters = Number(outcome.distinct_spotters ?? 0); const arrived = outcome.status === 'arrived';
+    return NextResponse.json({ sightingId: outcome.sighting_id, verified, confidence: verified ? 'verified' : 'unverified', distinctSpotters, checkpoint: checkpoint.name,
+      routeId: verified ? routeUpdate.routeId : trip.route_id, routeLocked: verified ? routeUpdate.locked : trip.route_locked, arrived, impliedSpeedKmh, duplicate: insertedRows.length === 0,
+      message: verified ? 'Verified passed.' : 'Unverified sighting — awaiting another browser session or a moving Rider Beacon.'
+    }, { status: insertedRows.length ? 201 : 200 });
 
-    return NextResponse.json({
-      sightingId, verified, confidence: verified ? 'verified' : 'unverified', distinctSpotters,
-      checkpoint: checkpoint.name, routeId: verified ? routeUpdate.routeId : trip.route_id,
-      routeLocked: verified ? routeUpdate.locked : trip.route_locked, arrived: tripArrived, impliedSpeedKmh,
-      message: verified ? 'Verified passed.' : 'Unverified sighting — awaiting another spotter or a moving rider beacon.',
-    }, { status: 201 });
   } catch (error) {
     console.error('ByahePanay sighting validation failed', error);
     return jsonError('Could not validate this sighting. Please retry.', 500);
