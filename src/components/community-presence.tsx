@@ -54,7 +54,7 @@ export default function CommunityPresence() {
   useEffect(() => {
     const updateConnection = () => setBrowserOnline(navigator.onLine);
     updateConnection();
-    void refresh();
+    const initialRefresh = window.setTimeout(() => void refresh(), 0);
 
     const poll = () => {
       if (document.visibilityState === 'visible') void refresh();
@@ -70,6 +70,7 @@ export default function CommunityPresence() {
     window.addEventListener('offline', updateConnection);
 
     return () => {
+      window.clearTimeout(initialRefresh);
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', poll);
       document.removeEventListener('focus', poll);
