@@ -27,7 +27,12 @@ export async function POST(request: NextRequest) {
   const busType = body.busType;
   if (!routeId || !VALID_ROUTES.includes(routeId)) return jsonError('Choose a valid Panay corridor.');
   if (busType !== 'ordinary' && busType !== 'aircon') return jsonError('Choose Ordinary or Aircon.');
-  if (!isUuid(body.checkpointId)) return jsonError('Choose the checkpoint where you first saw the bus.');
+  if (!body.checkpointId) {
+    return jsonError('Choose the checkpoint where you first saw the bus.', 400, 'CHECKPOINT_REQUIRED');
+  }
+  if (!isUuid(body.checkpointId)) {
+    return jsonError('The selected checkpoint could not be matched to live route data. Refresh the routes and select your checkpoint again.', 400, 'INVALID_CHECKPOINT_ID');
+  }
 
   const bodyNumber = body.bodyNumber?.trim() || null;
   const plateNumber = body.plateNumber?.trim() || null;
