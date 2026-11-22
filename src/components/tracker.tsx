@@ -9,7 +9,7 @@ import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/l
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
 type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;
-type PhoneOtpState = { configured: boolean; required: boolean; verified: boolean; phoneMasked: string | null };
+type EmailOtpState = { configured: boolean; required: boolean; verified: boolean; emailMasked: string | null; verificationMethod: 'email' | 'sms' | null };
 
 async function ensureSpotterSession() {
   const response = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
@@ -51,8 +51,8 @@ export default function Tracker() {
   const [waitStopId, setWaitStopId] = useState<string | null>(null);
   const [message, setMessage] = useState<UiMessage>(null);
   const [queuedCount, setQueuedCount] = useState(0);
-  const [otpStatus, setOtpStatus] = useState<PhoneOtpState>({ configured: false, required: false, verified: false, phoneMasked: null });
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpStatus, setOtpStatus] = useState<EmailOtpState>({ configured: false, required: false, verified: false, emailMasked: null, verificationMethod: null });
+  const [emailAddress, setEmailAddress] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
@@ -478,28 +478,28 @@ export default function Tracker() {
     } finally { setBusy(false); }
   };
 
-  const requestPhoneOtp = async (event: FormEvent<HTMLFormElement>) => {
+  const requestEmailOtp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setOtpBusy(true);
     try {
       await ensureSpotterSession();
-      const response = await fetch('/api/otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ phoneNumber }) });
-      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; phoneMasked?: string };
+      const response = await fetch('/api/otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ emailAddress }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; emailMasked?: string };
       if (!response.ok) throw new Error(result.error ?? 'Could not send verification code.');
-      setOtpSent(true); setMessage({ kind: 'success', text: result.message ?? `Code sent to ${result.phoneMasked}.` });
+      setOtpSent(true); setMessage({ kind: 'success', text: result.message ?? `Code sent to ${result.emailMasked}.` });
     } catch (error) { setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Could not send verification code.' }); }
     finally { setOtpBusy(false); }
   };
 
-  const verifyPhoneOtp = async (event: FormEvent<HTMLFormElement>) => {
+  const verifyEmailOtp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setOtpBusy(true);
     try {
       await ensureSpotterSession();
-      const response = await fetch('/api/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ phoneNumber, code: otpCode }) });
-      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; phoneMasked?: string };
-      if (!response.ok) throw new Error(result.error ?? 'Phone verification failed.');
-      setOtpStatus((current) => ({ ...current, verified: true, phoneMasked: result.phoneMasked ?? null }));
-      setOtpCode(''); setOtpSent(false); setMessage({ kind: 'success', text: result.message ?? 'Phone number verified.' });
-    } catch (error) { setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Phone verification failed.' }); }
+      const response = await fetch('/api/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ emailAddress, code: otpCode }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; emailMasked?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Email verification failed.');
+      setOtpStatus((current) => ({ ...current, verified: true, emailMasked: result.emailMasked ?? null, verificationMethod: 'email' }));
+      setOtpCode(''); setOtpSent(false); setMessage({ kind: 'success', text: result.message ?? 'Email verified.' });
+    } catch (error) { setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Email verification failed.' }); }
     finally { setOtpBusy(false); }
   };
 
@@ -552,14 +552,14 @@ export default function Tracker() {
       </header>
 
       <div className="page-content" id="main-content">
-        <section className="card verification-card" aria-labelledby="phone-verification-title">
-          <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="phone-verification-title">Phone verification</h2></div>{otpStatus.verified ? <span className="verified-pill">✓ SMS verified</span> : <span className="confidence unverified">Not verified</span>}</div>
-          {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.phoneMasked}. Verified phone identities help distinguish separate community reporters.</p> : <>
-            <p className="verification-copy">Verify a Philippine mobile number by SMS. We store a keyed phone hash and masked number—not your OTP or full phone number. {otpStatus.required ? 'Verification is required for departures and sightings.' : 'Verification is currently optional while the pilot configures SMS delivery.'}</p>
-            {!otpStatus.configured ? <div className="notice info">SMS OTP is ready in the app, but the administrator must configure Twilio Verify before codes can be sent.</div> : <>
-              <form className="otp-form" onSubmit={requestPhoneOtp}><div className="field"><label htmlFor="otp-phone">Philippine mobile number</label><input id="otp-phone" type="tel" inputMode="tel" autoComplete="tel" value={phoneNumber} onChange={(event)=>setPhoneNumber(event.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send SMS OTP'}</button></form>
-              {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyPhoneOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,10))} inputMode="numeric" autoComplete="one-time-code" placeholder="Enter SMS code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length<4}>{otpBusy?'Verifying…':'Verify number'}</button></form>}
-              <p className="verification-footnote">Codes expire after 10 minutes. SMS charges or carrier restrictions may apply.</p>
+        <section className="card verification-card" aria-labelledby="email-verification-title">
+          <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="email-verification-title">Email verification</h2></div>{otpStatus.verified ? <span className="verified-pill">{otpStatus.verificationMethod === 'sms' ? '✓ Previously phone verified' : '✓ Email verified'}</span> : <span className="confidence unverified">Not verified</span>}</div>
+          {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.emailMasked}. A verified email helps keep the same reporter identity across browser sessions.</p> : <>
+            <p className="verification-copy">Verify access to your email inbox with a one-time code. We store a keyed email hash and masked address—not your full email address or OTP. {otpStatus.required ? 'Verification is required for departures and sightings.' : 'Verification is currently optional while the administrator configures email delivery.'}</p>
+            {!otpStatus.configured ? <div className="notice info">Email OTP is ready in the app, but the administrator must configure Resend (RESEND_API_KEY and EMAIL_FROM) before codes can be sent.</div> : <>
+              <form className="otp-form" onSubmit={requestEmailOtp}><div className="field"><label htmlFor="otp-email">Email address</label><input id="otp-email" type="email" inputMode="email" autoComplete="email" value={emailAddress} onChange={(event)=>setEmailAddress(event.target.value)} placeholder="you@example.com" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send email OTP'}</button></form>
+              {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyEmailOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,6))} inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit email code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length!==6}>{otpBusy?'Verifying…':'Verify email'}</button></form>}
+              <p className="verification-footnote">Codes expire after 10 minutes. Up to 4 delivery requests per hour and 5 verification attempts per 10 minutes.</p>
             </>}
           </>}
         </section>
