@@ -7,7 +7,7 @@ const steps = [
   { title: 'Choose your corridor', body: 'Select the route you are travelling on. Kalibo has two variants: via Mambusao and via Sapian. The selected corridor determines which stops and trips are compared.', action: 'View routes', href: '#corridors' },
   { title: 'Find your waiting stop', body: 'Use My Location to find a nearby mapped stop, or choose your stop manually. GPS can drift, especially indoors. When the app reports a weak or distant fix, refresh outdoors and check the stop yourself.', action: 'Find a stop', href: '#arrivals' },
   { title: 'Read arrivals and checkpoints', body: 'Verified means a report met the app’s corroboration rules. Unverified means confirmation is still pending. Scheduled is a projection, not a confirmed dispatch. Tracking lost means the ETA is paused.', action: 'See the trip timeline', href: '#checkpoint-timeline' },
-  { title: 'Contribute safely', body: 'Verify your email before contributing. Departures and checkpoint reports require location permission. Rider Beacon is optional and may be interrupted by the browser or operating system.', action: 'Go to Contribute', href: '#contribution' },
+  { title: 'Contribute safely', body: 'Verify your email before contributing. You can be the first to start a trip from any mapped checkpoint—Pueblo is not required. Choose the direction and stop where you saw the bus; GPS verifies the location. Rider Beacon is optional.', action: 'Go to Contribute', href: '#contribution' },
 ];
 
 export default function OnboardingGuide() {
