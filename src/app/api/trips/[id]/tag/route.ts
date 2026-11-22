@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
 import { getSpotterSessionId } from '@/lib/spotter-session';
+import { requireReporterIdentity } from '@/lib/reporter-verification';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
+  const reporter = await requireReporterIdentity(sql, spotterId);
+  if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before attaching a bus number.', 428, 'EMAIL_VERIFICATION_REQUIRED');
   const { id } = await context.params;
   if (!isUuid(id)) return jsonError('Invalid trip identifier.');
   let body: { bodyNumber?: string; plateNumber?: string };
@@ -18,7 +21,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   const bodyNumber = body.bodyNumber?.trim();
   const plateNumber = body.plateNumber?.trim() || null;
-  if (!bodyNumber || bodyNumber.length > 20) return jsonError('Enter a valid Ceres body number (maximum 20 characters).');
+  if (!bodyNumber || bodyNumber.length > 20) return jsonError('Enter a valid bus number (maximum 20 characters).');
   if (plateNumber && plateNumber.length > 16) return jsonError('Plate number is too long.');
 
   try {

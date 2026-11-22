@@ -3,6 +3,7 @@ import { getDb } from '@/lib/db';
 import { adminUnavailable, jsonError, isSameOriginRequest, isUuid } from '@/lib/http';
 import { createSpotterSessionToken, SPOTTER_SESSION_COOKIE } from '@/lib/session-core';
 import { getSpotterSessionId } from '@/lib/spotter-session';
+import { requireReporterIdentity } from '@/lib/reporter-verification';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
@@ -29,6 +30,8 @@ export async function POST(request: NextRequest) {
   if (!isUuid(legacySpotterId)) return jsonError('The legacy browser identifier is invalid.', 400, 'INVALID_LEGACY_SESSION');
   const sql = getDb();
   if (!sql) return adminUnavailable();
+  const reporter = await requireReporterIdentity(sql, spotterId);
+  if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before restoring previous contribution sessions.', 428, 'EMAIL_VERIFICATION_REQUIRED');
   try {
     const eligible = await sql`
       select t.id from public.trips t

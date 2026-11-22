@@ -1,6 +1,6 @@
-# BiyahePanay — Ceres Liner Last-Trip Tracker
+# BiyahePanay — Bus Tracking & Passenger Information
 
-Mobile-first Next.js PWA for community checkpoint reports and estimated Ceres Liner arrivals across Capiz, Iloilo, and Aklan. It is not an official Ceres Liner schedule or operator service.
+Mobile-first Next.js PWA for community checkpoint reports and estimated bus arrivals across Capiz, Iloilo, and Aklan. BiyahePanay is independent and community-powered; it is not an official transport operator timetable or service.
 
 ## Stack
 
@@ -110,7 +110,7 @@ Each checkpoint segment is calibrated separately by route and bus type. A sample
 ## Operational monitoring and research metrics
 `/api/health` is the health probe. `/api/ops/metrics?days=30` returns aggregate daily report-quality and ETA calibration metrics; `/ops` is the visual dashboard. A Vercel Cron job calls `/api/ops/snapshot` once daily at midnight Manila time using `CRON_SECRET` and records the previous completed Manila calendar day, stores historical aggregates, and opens/resolves alerts for slow database queries and stale active trips. No raw email addresses, phone numbers, or per-reporter identities are exposed in the dashboard.
 
-Calibration values are research estimates, not official schedules. Field-validate checkpoint coordinates and timestamps with Vallacar/Ceres permission before operational reliance.
+Calibration values are research estimates, not official timetables. Field-validate checkpoint coordinates and timestamps with transport operators and local field checks before operational reliance.
 
 
 ### Rebrand compatibility

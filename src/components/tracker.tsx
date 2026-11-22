@@ -355,7 +355,7 @@ export default function Tracker() {
 
   const lookupBus = async () => {
     if (!tagBody.trim()) {
-      setMessage({ kind: 'info', text: 'Enter a Ceres body number to look up.' });
+      setMessage({ kind: 'info', text: 'Enter a bus number to look up.' });
       return;
     }
     try {
@@ -540,7 +540,7 @@ export default function Tracker() {
             </div>
           </div>
           <h1 className="header-title">Catch the last trip.<br />Not the guesswork.</h1>
-          <p className="header-subtitle">Crowd-verified Ceres Liner sightings across Capiz, Iloilo, and Aklan.</p>
+          <p className="header-subtitle">Community-verified bus sightings across Capiz, Iloilo, and Aklan.</p>
           <div className="header-meta">
             <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
             <div className={`connection-pill ${isOnline ? 'connected' : 'disconnected'}`} role="status" aria-live="polite">
@@ -666,7 +666,7 @@ export default function Tracker() {
             {activeTrip.status === 'active' && <details className="details-box">
               <summary>🪪 Bus Registry Lookup / Tag</summary>
               <form className="form-grid" onSubmit={saveBusTag}>
-                <div className="field"><label htmlFor="tag-body">Ceres body number</label><input id="tag-body" value={tagBody} onChange={(event) => setTagBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} required /></div>
+                <div className="field"><label htmlFor="tag-body">Bus number</label><input id="tag-body" value={tagBody} onChange={(event) => setTagBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} required /></div>
                 <div className="field"><label htmlFor="tag-plate">Plate number</label><input id="tag-plate" value={tagPlate} onChange={(event) => setTagPlate(event.target.value)} placeholder="Optional" maxLength={16} /></div>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="secondary-button" type="button" onClick={lookupBus} disabled={busy}>Lookup body number</button><button className="primary-button" type="submit" disabled={busy}>Attach bus tag</button></div>
               </form>
@@ -710,7 +710,7 @@ export default function Tracker() {
           </div>)}
         </div> : <div className="card empty-trip"><p>Projected slots appear after an actual departure is logged as the cadence anchor. These are projections, not confirmed operator dispatches.</p></div>}
 
-        <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official Ceres Liner schedules. Coordinates must be field-checked before public operational use.</p>
+        <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
 
       <nav className="bottom-bar" aria-label="Quick reporting actions">
