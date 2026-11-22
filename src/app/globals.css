@@ -593,3 +593,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .community-presence-footer { align-items: flex-start; }
   .community-presence-error { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* Landing-page hierarchy and four-action contribution bar. */
+.route-section-label { margin-top: 9px; }
+.corridor-wrap { margin-bottom: 16px; }
+.bottom-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.action-button.refresh { border-color: #cbd9df; background: #eef4f6; color: #29434f; }
+.action-button.refresh .action-copy { color: #70818a; }
+:root[data-theme="dark"] .action-button.refresh { border-color: #40545f; background: #233640; color: #edf4f7; }
+:root[data-theme="dark"] .action-button.refresh .action-copy { color: #bac8ce; }
+@media (max-width: 420px) {
+  .bottom-actions { gap: 5px; }
+  .action-button { min-width: 0; padding-right: 2px; padding-left: 2px; }
+  .action-button .action-label { font-size: 8px; }
+  .action-button .action-copy { font-size: 7px; }
+}
