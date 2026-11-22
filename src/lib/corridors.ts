@@ -4,11 +4,11 @@ import type { Checkpoint, RouteDefinition } from './types';
 // Replace with field-verified highway-side coordinates before public launch.
 const P = {
   pueblo: { code: 'pueblo_terminal', name: 'Pueblo de Panay Terminal', lat: 11.55987, lng: 122.74805 },
-  lawaan: { code: 'lawaan', name: 'Lawaan', lat: 11.5662, lng: 122.7563 },
-  bolo: { code: 'bolo', name: 'Bolo', lat: 11.5517, lng: 122.7271 },
-  lanot: { code: 'lanot', name: 'Lanot', lat: 11.5385, lng: 122.7062 },
-  lonoy: { code: 'lonoy', name: 'Loñoy', lat: 11.5290, lng: 122.6962 },
-  ivisan: { code: 'ivisan', name: 'Ivisan', lat: 11.5217, lng: 122.6908 },
+  lawaan: { code: 'lawaan', name: 'Lawaan', lat: 11.551354, lng: 122.758464 },
+  bolo: { code: 'bolo', name: 'Bolo', lat: 11.543040, lng: 122.758362 },
+  lanot: { code: 'lanot', name: 'Lanot', lat: 11.522087, lng: 122.757176 },
+  lonoy: { code: 'lonoy', name: 'Loñoy', lat: 11.510291, lng: 122.744620 },
+  ivisan: { code: 'ivisan', name: 'Ivisan', lat: 11.518743, lng: 122.697715 },
   sigma: { code: 'sigma', name: 'Sigma', lat: 11.4219, lng: 122.6664 },
   dao: { code: 'dao', name: 'Dao', lat: 11.3937, lng: 122.6856 },
   cuartero: { code: 'cuartero', name: 'Cuartero', lat: 11.3407, lng: 122.6694 },

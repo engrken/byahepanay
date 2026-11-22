@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ROUTES, routeForTab } from '@/lib/corridors';
 import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
 import { nearestCheckpoint, formatDistance } from '@/lib/geo';
+import { MAX_NEAREST_STOP_DISTANCE_METERS } from '@/lib/presence';
+import OnboardingGuide from '@/components/onboarding-guide';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
 import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
@@ -194,7 +196,7 @@ export default function Tracker() {
   // Use the rider's browser location to find the nearest mapped stop on the selected corridor.
   // The coordinates stay on this device unless the rider separately submits a bus sighting.
   const nearestUserStop = useMemo(
-    () => riderLocation ? nearestCheckpoint(riderLocation, selectedBoardRoute.checkpoints) : null,
+    () => riderLocation ? nearestCheckpoint(riderLocation, selectedBoardRoute.checkpoints, Math.max(MAX_NEAREST_STOP_DISTANCE_METERS, riderLocation.accuracy * 3)) : null,
     [riderLocation, selectedBoardRoute],
   );
   const targetStop = useMemo(() => {
@@ -282,7 +284,7 @@ export default function Tracker() {
             ? 'Location lookup timed out. Try again outdoors or select your stop manually.'
             : 'Could not read your location. Choose your stop manually.',
       );
-    }, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 });
+    }, { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 });
   };
 
   const recordDeparture = async () => {
@@ -520,7 +522,7 @@ export default function Tracker() {
           : 'Get ready and keep your phone nearby.';
 
   return (
-    <main className="app-shell">
+    <main className="app-shell"><OnboardingGuide />
       <a className="skip-link" href="#main-content">Skip to tracker</a>
       <header className="topbar">
         <div className="topbar-inner">
@@ -557,6 +559,7 @@ export default function Tracker() {
             <a href="#active-trip">Current trip</a>
             <a href="#checkpoint-timeline">Checkpoints</a>
             <a href="#contribution">Contribute</a>
+            <a href="/help">Help / User guide</a>
             {otpStatus.isDeveloperAdmin && <a className="site-menu-admin" href="/ops">Operations &amp; analytics</a>}
           </nav>
         </div>
@@ -609,10 +612,12 @@ export default function Tracker() {
               {selectedBoardRoute.checkpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
             </select>
           </div>
-          <div className="arrival-location-meta">
+          <div className="arrival-location-meta" aria-live="polite">
             {riderLocation && nearestUserStop
-              ? <>Nearest mapped stop: <strong>{nearestUserStop.checkpoint.name}</strong> · approx. {formatDistance(nearestUserStop.distanceMeters)} away · GPS accuracy ±{formatDistance(riderLocation.accuracy)}</>
-              : 'Use your location or select a stop manually. Your location stays on this device.'}
+              ? <>Nearest mapped stop: <strong>{nearestUserStop.checkpoint.name}</strong> · approx. {formatDistance(nearestUserStop.distanceMeters)} away · GPS accuracy ±{formatDistance(riderLocation.accuracy)}{riderLocation.accuracy > 50 ? ' · GPS signal is imprecise; try again outdoors.' : ''}</>
+              : riderLocation
+                ? <>No mapped stop is within {formatDistance(Math.max(MAX_NEAREST_STOP_DISTANCE_METERS, riderLocation.accuracy * 3))} of this GPS fix. Please choose your waiting stop manually. GPS accuracy ±{formatDistance(riderLocation.accuracy)}.</>
+                : 'Use your location or select your stop manually. Your location stays on this device.'}
           </div>
           {locationError && <div className="notice error">{locationError}</div>}
           {targetStop ? <div className="arrival-results">

@@ -15,6 +15,7 @@ export function haversineKm(a: Pick<Checkpoint, 'lat' | 'lng'>, b: Pick<Checkpoi
 export function nearestCheckpoint<T extends Checkpoint>(
   point: Pick<GeolocationCoordinates, 'latitude' | 'longitude'>,
   checkpoints: T[],
+  maxDistanceMeters = Number.POSITIVE_INFINITY,
 ): { checkpoint: T; distanceMeters: number } | null {
   if (!checkpoints.length) return null;
   let nearest: T | null = null;
@@ -29,7 +30,7 @@ export function nearestCheckpoint<T extends Checkpoint>(
       nearestMeters = meters;
     }
   }
-  return nearest ? { checkpoint: nearest, distanceMeters: nearestMeters } : null;
+  return nearest && nearestMeters <= maxDistanceMeters ? { checkpoint: nearest, distanceMeters: nearestMeters } : null;
 }
 
 export function formatDistance(meters: number): string {

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import PresenceHeartbeat from '@/components/presence-heartbeat';
 
 export const metadata: Metadata = {
   title: 'BiyahePanay — Bus Tracking & Passenger Information',
@@ -26,7 +27,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           }}
         />
       </head>
-      <body>{children}</body>
+      <body><PresenceHeartbeat />{children}</body>
     </html>
   );
 }

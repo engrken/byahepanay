@@ -53,6 +53,8 @@ type Metrics = {
     stale_active_trip_count: number;
   } | null;
   activeTrips: ActiveTrip[];
+  presence?: { active_users_now: number; active_contributors_now: number; contributors_reporting_15m: number };
+  checkpointReviews?: Array<{ code: string; name: string; lat: number; lng: number; source: string; validation_status: string; note: string; submitted_at: string; reviewed_at: string | null }>;
 };
 
 function minutesSince(value: string) {
@@ -214,6 +216,19 @@ export default function OpsDashboard() {
             </div>}
         </section>
 
+        <section className="card ops-panel" id="live-presence">
+          <div className="ops-panel-head">
+            <div><h2>Live audience and contributors</h2><p>Refreshed every 30 seconds · visible browser sessions heartbeat every minute.</p></div>
+            <span className="ops-state healthy">Live presence</span>
+          </div>
+          <div className="ops-kpis">
+            <Kpi label="Active users · 5 min" value={data.presence?.active_users_now ?? 0} />
+            <Kpi label="Active verified contributors · 5 min" value={data.presence?.active_contributors_now ?? 0} />
+            <Kpi label="Contributors reporting · 15 min" value={data.presence?.contributors_reporting_15m ?? 0} />
+          </div>
+          <p className="ops-footnote">Active users are signed browser sessions seen within five minutes, not unique people. Contributors are deduplicated by verified reporter identity. No GPS, IP address or email address is collected for these counts.</p>
+        </section>
+
         <section className="ops-kpis">
           <Kpi label="Reports · 30 days" value={summary?.reports ?? 0} />
           <Kpi label="Verified report rate" value={`${verifiedRate}%`} />
@@ -234,6 +249,27 @@ export default function OpsDashboard() {
               ? `${Number(summary.median_gps_accuracy_m).toFixed(0)} m` : '—'} />
           </div>
           <p className="ops-footnote">Live health probe: <a href="/api/health">/api/health</a></p>
+        </section>
+
+        <section className="card ops-panel" id="checkpoint-review">
+          <div className="ops-panel-head">
+            <div><h2>Checkpoint coordinate review</h2><p>Open each pin in Google Maps during field checks. A map pin is not field-verified until its roadside waiting point is confirmed.</p></div>
+            <span className="ops-state warning">Field review pending</span>
+          </div>
+          {(data.checkpointReviews ?? []).length === 0
+            ? <p>No coordinate review records are available.</p>
+            : <div className="ops-table-wrap"><table className="ops-table">
+              <thead><tr><th>Checkpoint</th><th>Coordinates</th><th>Review status</th><th>Map</th></tr></thead>
+              <tbody>{data.checkpointReviews?.map((item) => (
+                <tr key={item.code}>
+                  <td><strong>{item.name}</strong><small>{item.code}</small></td>
+                  <td>{Number(item.lat).toFixed(6)}, {Number(item.lng).toFixed(6)}</td>
+                  <td><span className="ops-state warning">{item.validation_status.replace(/_/g, ' ')}</span><small>{item.source.replace(/_/g, ' ')}</small></td>
+                  <td><a href={"https://www.google.com/maps/search/?api=1&query=" + item.lat + "," + item.lng} target="_blank" rel="noreferrer">Open Google Maps ↗</a></td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
+          <p className="ops-footnote">Review the correct highway side, passenger waiting point and nearby barangay boundary. Confirm with a fresh roadside GPS fix before changing a status to field-verified.</p>
         </section>
 
         <section className="card ops-panel">

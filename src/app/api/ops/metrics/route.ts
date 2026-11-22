@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSpotterSessionId } from '@/lib/spotter-session';
 import { isDeveloperAdmin } from '@/lib/admin-verification';
+import { ACTIVE_PRESENCE_WINDOW_MINUTES, ACTIVE_REPORT_WINDOW_MINUTES } from '@/lib/presence';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const raw = Number(request.nextUrl.searchParams.get('days') ?? 30);
     const days = Number.isFinite(raw) ? Math.min(90, Math.max(7, Math.floor(raw))) : 30;
-    const [daily, calibrations, alerts, health, summary, activeTrips] = await Promise.all([
+    const [daily, calibrations, alerts, health, summary, activeTrips, presence, checkpointReviews] = await Promise.all([
       sql`select metric_date,report_count,verified_report_count,otp_verified_report_count,unique_verified_reporters,median_gps_accuracy_m,median_report_distance_m,calibration_sample_count,calibrated_segment_count,average_quality_score
         from public.report_quality_daily
         where metric_date >= (now() at time zone 'Asia/Manila')::date - ${days}::int + 1
@@ -66,6 +67,18 @@ export async function GET(request: NextRequest) {
         where t.status='active'
         order by coalesce(t.last_checkpoint_at,t.departure_at) asc
         limit 50`,
+
+      sql`select
+          (select count(distinct spotter_id)::int from public.app_presence
+            where last_seen_at > now() - (${ACTIVE_PRESENCE_WINDOW_MINUTES}::int * interval '1 minute')) as active_users_now,
+          (select count(distinct reporter_id)::int from public.app_presence
+            where reporter_id is not null and last_seen_at > now() - (${ACTIVE_PRESENCE_WINDOW_MINUTES}::int * interval '1 minute')) as active_contributors_now,
+          (select count(distinct reporter_id)::int from public.sightings
+            where reporter_id is not null and created_at > now() - (${ACTIVE_REPORT_WINDOW_MINUTES}::int * interval '1 minute')) as contributors_reporting_15m`,
+      sql`select c.code,c.name,c.lat,c.lng,r.source,r.validation_status,r.note,r.submitted_at,r.reviewed_at
+        from public.checkpoint_location_reviews r
+        join public.checkpoints c on c.id=r.checkpoint_id
+        order by c.name`,
     ]);
 
     return NextResponse.json({
@@ -76,6 +89,8 @@ export async function GET(request: NextRequest) {
       alerts,
       latestHealth: health[0] ?? null,
       activeTrips,
+      presence: presence[0] ?? { active_users_now: 0, active_contributors_now: 0, contributors_reporting_15m: 0 },
+      checkpointReviews,
       calibrationPolicy: {
         minimumSamples: 8,
         minimumQualityScore: 70,

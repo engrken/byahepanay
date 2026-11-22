@@ -183,9 +183,9 @@ on conflict (id) do update set name=excluded.name, short_name=excluded.short_nam
 
 insert into public.checkpoints (code,name,lat,lng) values
  ('pueblo_terminal','Pueblo de Panay Terminal',11.55987,122.74805),
- ('lawaan','Lawaan',11.5662,122.7563), ('bolo','Bolo',11.5517,122.7271),
- ('lanot','Lanot',11.5385,122.7062), ('lonoy','Loñoy',11.5290,122.6962),
- ('ivisan','Ivisan',11.5217,122.6908), ('sigma','Sigma',11.4219,122.6664),
+ ('lawaan','Lawaan',11.551354,122.758464), ('bolo','Bolo',11.543040,122.758362),
+ ('lanot','Lanot',11.522087,122.757176), ('lonoy','Loñoy',11.510291,122.744620),
+ ('ivisan','Ivisan',11.518743,122.697715), ('sigma','Sigma',11.4219,122.6664),
  ('dao','Dao',11.3937,122.6856), ('cuartero','Cuartero',11.3407,122.6694),
  ('dumarao','Dumarao',11.2654,122.6889), ('passi_city','Passi City',11.1078,122.6415),
  ('duenas','Dueñas',11.0675,122.6180), ('pototan','Pototan',10.9440,122.6350),
@@ -231,3 +231,37 @@ join public.checkpoints c on c.code=v.code
 on conflict (route_id,checkpoint_id) do update
 set sequence=excluded.sequence, eta_offset_minutes=excluded.eta_offset_minutes,
     segment_minutes=excluded.segment_minutes, dwell_buffer_minutes=excluded.dwell_buffer_minutes;
+
+
+-- Pilot readiness: privacy-preserving active-session counts and checkpoint coordinate provenance.
+CREATE TABLE IF NOT EXISTS public.app_presence (
+  spotter_id uuid PRIMARY KEY,
+  reporter_id uuid REFERENCES public.reporter_identities(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS app_presence_last_seen_idx ON public.app_presence(last_seen_at);
+CREATE INDEX IF NOT EXISTS app_presence_reporter_last_seen_idx ON public.app_presence(reporter_id,last_seen_at);
+
+CREATE TABLE IF NOT EXISTS public.checkpoint_location_reviews (
+  checkpoint_id uuid PRIMARY KEY REFERENCES public.checkpoints(id) ON DELETE CASCADE,
+  previous_lat double precision,
+  previous_lng double precision,
+  proposed_lat double precision NOT NULL,
+  proposed_lng double precision NOT NULL,
+  source text NOT NULL,
+  validation_status text NOT NULL DEFAULT 'pending_field_validation'
+    CHECK (validation_status IN ('pending_field_validation','map_reviewed','field_verified')),
+  note text NOT NULL DEFAULT '',
+  submitted_at timestamptz NOT NULL DEFAULT now(),
+  reviewed_at timestamptz,
+  reviewed_by uuid
+);
+
+INSERT INTO public.checkpoint_location_reviews
+  (checkpoint_id,proposed_lat,proposed_lng,source,validation_status,note)
+SELECT id,lat,lng,'project_owner_supplied','pending_field_validation',
+  'Pilot coordinate supplied by the project owner. Exact roadside waiting point and highway side still require on-site confirmation.'
+FROM public.checkpoints
+WHERE code IN ('lawaan','bolo','lanot','lonoy','ivisan')
+ON CONFLICT (checkpoint_id) DO NOTHING;

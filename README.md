@@ -115,3 +115,12 @@ Calibration values are research estimates, not official timetables. Field-valida
 
 ### Rebrand compatibility
 The app display name is now **BiyahePanay**. Existing IndexedDB, local-storage, service-worker sync, and session-cookie identifiers are intentionally retained so installed devices keep their queued sightings, preferences, and active sessions across the spelling change. The service-worker shell cache is versioned separately to refresh the renamed app shell.
+
+
+## Passenger guide and live audience monitoring
+
+- Passenger guide: /help; first-time visitors see a skippable quick-start walkthrough.
+- Visible browser sessions heartbeat every 60 seconds. Operations reports signed browser sessions seen within five minutes, verified contributor identities currently online, and verified contributors who reported within 15 minutes.
+- Presence records contain only opaque session IDs and verified reporter IDs; no GPS, IP address, full email or user-agent is collected for these counters.
+- The five pilot checkpoint pins supplied by the project owner are tagged as pending field validation until the passenger waiting point and highway side are checked on site. Operations links each candidate pin to Google Maps.
+- Nearest-stop matching does not confidently name a distant fallback when no stop is within 1.5 km (or 3 times reported GPS accuracy, if greater).

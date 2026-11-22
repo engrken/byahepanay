@@ -1,7 +1,7 @@
 import { NextRequest,NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 export const dynamic='force-dynamic';export const runtime='nodejs';
-export async function GET(request:NextRequest){const secret=process.env.CRON_SECRET;if(!secret||request.headers.get('authorization')!==`Bearer ${secret}`)return NextResponse.json({error:'Unauthorized'},{status:401});const sql=getDb();if(!sql)return NextResponse.json({error:'Database unavailable'},{status:503});const started=Date.now();try{
+export async function GET(request:NextRequest){const secret=process.env.CRON_SECRET;if(!secret||request.headers.get('authorization')!==`Bearer ${secret}`)return NextResponse.json({error:'Unauthorized'},{status:401});const sql=getDb();if(!sql)return NextResponse.json({error:'Database unavailable'},{status:503});const started=Date.now();try{await sql`delete from public.app_presence where last_seen_at < now() - interval '7 days'`; 
 const[dailyRows,healthRows]=await Promise.all([
 sql`with bounds as (
   select ((now() at time zone 'Asia/Manila')::date - 1) as metric_date,

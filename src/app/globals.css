@@ -521,3 +521,40 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .ops-trip-review-meta { grid-template-columns: 1fr 1fr; }
   .ops-trip-review-top { align-items: flex-start; }
 }
+
+
+/* Pilot readiness: passenger help and first-run onboarding. */
+.help-shell{width:min(100% - 28px,820px);margin:0 auto;padding:28px 0 60px;color:var(--ink)}
+.help-header{padding:24px;border-radius:18px;background:linear-gradient(135deg,#152b3a,#243d4d);color:#fff;margin-bottom:14px}
+.help-header h1{font-size:clamp(27px,6vw,40px);line-height:1.1;margin:8px 0}
+.help-header p{max-width:650px;color:#d6e2e7;line-height:1.6;font-size:14px}
+.help-kicker,.onboarding-kicker{font-size:10px;font-weight:850;letter-spacing:.13em;text-transform:uppercase;color:#b9c7d0}
+.help-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.help-toc{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.help-toc a{display:inline-flex;padding:9px 12px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:var(--ink);font-size:11px;font-weight:750;text-decoration:none}
+.help-section{padding:18px;margin-bottom:12px}
+.help-section h2{font-size:18px;margin:0 0 9px}
+.help-section p,.help-section li,.help-footer p{font-size:13px;line-height:1.65;color:var(--muted)}
+.help-section ul{padding-left:19px;margin:10px 0 0}
+.help-section li{margin:5px 0}
+.help-footer{padding:16px 4px}
+.help-footer a{color:var(--red);font-weight:800}
+.onboarding-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:16px;background:rgba(8,18,26,.72);backdrop-filter:blur(5px)}
+.onboarding-dialog{width:min(100%,520px);padding:23px;border-radius:20px;background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:0 24px 80px rgba(0,0,0,.3)}
+.onboarding-kicker{color:var(--red)}
+.onboarding-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin:13px 0 22px}
+.onboarding-progress span{height:4px;border-radius:99px;background:var(--line)}
+.onboarding-progress span.is-complete{background:var(--red)}
+.onboarding-dialog h2{font-size:23px;line-height:1.2;margin:0 0 10px}
+.onboarding-dialog p{font-size:14px;line-height:1.7;color:var(--muted);margin:0}
+.onboarding-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:22px}
+.onboarding-actions .primary-button{margin-left:auto;text-decoration:none}
+.onboarding-skip{border:0;background:transparent;color:var(--muted);font-size:11px;font-weight:800;padding:9px 6px;cursor:pointer}
+.onboarding-help-link{display:inline-block;margin-top:17px;color:var(--red);font-size:12px;font-weight:800}
+:root[data-theme="dark"] .help-toc a{color:var(--ink);background:var(--card)}
+@media(max-width:560px){
+  .help-header{padding:19px}
+  .onboarding-dialog{padding:19px}
+  .onboarding-actions .primary-button{order:3;margin-left:0}
+  .onboarding-actions .secondary-button{order:4}
+}
