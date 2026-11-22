@@ -1,6 +1,6 @@
 import { neon } from '@neondatabase/serverless';
-type NeonRows = Record<string, unknown>[];
-type NeonSql = ((strings: TemplateStringsArray, ...values: unknown[]) => Promise<NeonRows>) & {
+export type NeonRows = Record<string, unknown>[];
+export type NeonSql = ((strings: TemplateStringsArray, ...values: unknown[]) => Promise<NeonRows>) & {
   transaction: (queries: Promise<NeonRows>[], options?: { isolationLevel?: 'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable'; readOnly?: boolean }) => Promise<NeonRows[]>;
 };
 let cachedSql: NeonSql | null = null;

@@ -20,7 +20,7 @@ export async function GET() {
   }
 
   try {
-    const [routeRows, checkpointRows, linkRows, tripRows] = await Promise.all([
+    const [routeRows, checkpointRows, linkRows, tripRows, calibrationRows] = await Promise.all([
       sql`select id, name, short_name, destination from public.routes where is_active = true order by id`,
       sql`select id, code, name, lat, lng from public.checkpoints`,
       sql`select route_id, checkpoint_id, sequence, eta_offset_minutes, segment_minutes, dwell_buffer_minutes
@@ -35,12 +35,17 @@ export async function GET() {
           where t.status in ('active', 'arrived')
           order by t.departure_at desc
           limit 40`,
+      sql`select route_id,to_checkpoint_id,bus_type,sample_count,median_minutes,p80_minutes,updated_at
+          from public.eta_segment_calibrations where updated_at >= now() - interval '90 days'`,
     ]);
 
     const routesData = routeRows as RouteRow[];
     const checkpoints = checkpointRows as CheckpointRow[];
     const links = linkRows as RouteLinkRow[];
     const checkpointById = new Map(checkpoints.map((point) => [point.id, point]));
+    const calibrationByKey = new Map((calibrationRows as {route_id:string;to_checkpoint_id:string;bus_type:'ordinary'|'aircon';sample_count:number;median_minutes:number;p80_minutes:number;updated_at:string}[]).map((item)=>[
+      `${item.route_id}:${item.to_checkpoint_id}:${item.bus_type}`,item,
+    ]));
 
     const routes = routesData.map((route) => ({
       ...route,
@@ -54,6 +59,14 @@ export async function GET() {
             eta_offset_minutes: link.eta_offset_minutes,
             segment_minutes: link.segment_minutes,
             dwell_buffer_minutes: link.dwell_buffer_minutes,
+            calibrated_segment_minutes: {
+              ...(calibrationByKey.get(`${route.id}:${point.id}:ordinary`) ? { ordinary: Number(calibrationByKey.get(`${route.id}:${point.id}:ordinary`)!.median_minutes) } : {}),
+              ...(calibrationByKey.get(`${route.id}:${point.id}:aircon`) ? { aircon: Number(calibrationByKey.get(`${route.id}:${point.id}:aircon`)!.median_minutes) } : {}),
+            },
+            calibration_sample_count: {
+              ...(calibrationByKey.get(`${route.id}:${point.id}:ordinary`) ? { ordinary: Number(calibrationByKey.get(`${route.id}:${point.id}:ordinary`)!.sample_count) } : {}),
+              ...(calibrationByKey.get(`${route.id}:${point.id}:aircon`) ? { aircon: Number(calibrationByKey.get(`${route.id}:${point.id}:aircon`)!.sample_count) } : {}),
+            },
           } : null;
         })
         .filter((point): point is NonNullable<typeof point> => point !== null),

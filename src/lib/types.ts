@@ -12,6 +12,8 @@ export interface Checkpoint {
   eta_offset_minutes?: number;
   segment_minutes?: number;
   dwell_buffer_minutes?: number;
+  calibrated_segment_minutes?: Partial<Record<BusType, number>>;
+  calibration_sample_count?: Partial<Record<BusType, number>>;
 }
 
 export interface RouteDefinition {

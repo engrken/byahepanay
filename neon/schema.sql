@@ -50,11 +50,23 @@ create table if not exists public.trip_rider_sessions (
   joined_at timestamptz not null default now(), last_seen_at timestamptz not null default now(),
   primary key (trip_id, spotter_id)
 );
+create table if not exists public.reporter_identities (
+  id uuid primary key default gen_random_uuid(), phone_hash text not null unique, phone_masked text not null,
+  verified_at timestamptz not null default now(), created_at timestamptz not null default now()
+);
+create table if not exists public.spotter_reporter_links (
+  spotter_id uuid primary key, reporter_id uuid not null references public.reporter_identities(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.phone_verification_events (
+  id uuid primary key default gen_random_uuid(), spotter_id uuid not null, phone_hash text not null,
+  event_type text not null check (event_type in ('send','check')), provider_status text not null default 'requested', created_at timestamptz not null default now()
+);
 create table if not exists public.sightings (
   id uuid primary key default gen_random_uuid(), trip_id uuid not null references public.trips(id) on delete cascade,
   checkpoint_id uuid not null references public.checkpoints(id), spotter_id uuid not null,
-  idempotency_key uuid not null default gen_random_uuid(),
-  kind text not null check (kind in ('departure', 'roadside', 'rider_beacon')),
+  idempotency_key uuid not null default gen_random_uuid(), reporter_id uuid references public.reporter_identities(id) on delete set null,
+  gps_accuracy_m double precision, kind text not null check (kind in ('departure', 'roadside', 'rider_beacon')),
   lat double precision not null, lng double precision not null,
   distance_meters double precision not null default 0, implied_speed_kmh double precision,
   is_verified boolean not null default false,
@@ -63,10 +75,47 @@ create table if not exists public.sightings (
   verified_at timestamptz
 );
 
+create table if not exists public.eta_calibration_samples (
+  id uuid primary key default gen_random_uuid(), trip_id uuid not null references public.trips(id) on delete cascade,
+  route_id text not null references public.routes(id), from_checkpoint_id uuid not null references public.checkpoints(id),
+  to_checkpoint_id uuid not null references public.checkpoints(id), bus_type text not null check (bus_type in ('ordinary','aircon')),
+  baseline_minutes numeric(8,2) not null, observed_minutes numeric(8,2) not null, reporter_count integer not null,
+  mean_gps_accuracy_m numeric(8,2) not null, quality_score numeric(5,2) not null, observed_at timestamptz not null,
+  created_at timestamptz not null default now(), unique (trip_id,to_checkpoint_id)
+);
+create table if not exists public.eta_segment_calibrations (
+  route_id text not null references public.routes(id), from_checkpoint_id uuid not null references public.checkpoints(id),
+  to_checkpoint_id uuid not null references public.checkpoints(id), bus_type text not null check (bus_type in ('ordinary','aircon')),
+  sample_count integer not null, median_minutes numeric(8,2) not null, p80_minutes numeric(8,2) not null,
+  baseline_minutes numeric(8,2) not null, last_sample_at timestamptz not null, updated_at timestamptz not null default now(),
+  primary key (route_id,from_checkpoint_id,to_checkpoint_id,bus_type)
+);
+create table if not exists public.report_quality_daily (
+  metric_date date primary key, report_count integer not null default 0, verified_report_count integer not null default 0,
+  otp_verified_report_count integer not null default 0, unique_verified_reporters integer not null default 0,
+  median_gps_accuracy_m numeric(8,2), median_report_distance_m numeric(8,2), calibration_sample_count integer not null default 0,
+  calibrated_segment_count integer not null default 0, average_quality_score numeric(5,2), updated_at timestamptz not null default now()
+);
+create table if not exists public.ops_health_snapshots (
+  id uuid primary key default gen_random_uuid(), status text not null check (status in ('healthy','degraded','unavailable')),
+  database_latency_ms integer not null, active_trip_count integer not null, stale_active_trip_count integer not null,
+  calibration_segment_count integer not null, latest_sighting_at timestamptz, created_at timestamptz not null default now()
+);
+create table if not exists public.ops_alerts (
+  alert_key text primary key, severity text not null check (severity in ('info','warning','critical')), message text not null,
+  first_seen_at timestamptz not null default now(), last_seen_at timestamptz not null default now(), resolved_at timestamptz
+);
+
 create index if not exists route_checkpoints_route_sequence_idx on public.route_checkpoints(route_id, sequence);
 create index if not exists trips_active_route_departure_idx on public.trips(route_id, departure_at desc) where status = 'active';
 create index if not exists trips_updated_at_idx on public.trips(updated_at desc);
 create unique index if not exists sightings_idempotency_key_uidx on public.sightings(idempotency_key);
+create index if not exists sightings_reporter_time_idx on public.sightings(reporter_id,created_at desc);
+create index if not exists phone_verification_events_session_idx on public.phone_verification_events(spotter_id,event_type,created_at desc);
+create index if not exists phone_verification_events_phone_idx on public.phone_verification_events(phone_hash,event_type,created_at desc);
+create index if not exists eta_calibration_samples_segment_idx on public.eta_calibration_samples(route_id,from_checkpoint_id,to_checkpoint_id,bus_type,created_at desc);
+create index if not exists ops_health_snapshots_created_idx on public.ops_health_snapshots(created_at desc);
+create index if not exists report_quality_daily_date_idx on public.report_quality_daily(metric_date desc);
 create index if not exists sightings_trip_checkpoint_time_idx on public.sightings(trip_id, checkpoint_id, created_at desc);
 create index if not exists sightings_trip_checkpoint_observed_idx on public.sightings(trip_id, checkpoint_id, observed_at desc);
 create index if not exists sightings_spotter_kind_time_idx on public.sightings(spotter_id, kind, created_at desc);

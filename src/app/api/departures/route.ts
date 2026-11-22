@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
 import { getSpotterSessionId } from '@/lib/spotter-session';
+import { requireReporterIdentity } from '@/lib/reporter-verification';
 import { haversineKm } from '@/lib/geo';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,8 @@ export async function POST(request: NextRequest) {
   if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
+  const reporter = await requireReporterIdentity(sql, spotterId);
+  if (!reporter.allowed) return jsonError('Verify your mobile number with SMS OTP before logging a departure.', 428, 'PHONE_VERIFICATION_REQUIRED');
 
   let body: {
     routeId?: string; busType?: string; requestId?: string; bodyNumber?: string;
@@ -91,20 +94,20 @@ export async function POST(request: NextRequest) {
       sql`select pg_advisory_xact_lock(hashtextextended(${spotterId}, 0))`,
       sql`
         with eligible as (select 1 where not exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid)
-          and not exists (select 1 from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'departure' and created_at > ${rateSince}::timestamptz)),
+          and not exists (select 1 from public.sightings where kind = 'departure' and created_at > ${rateSince}::timestamptz and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid)))),
         new_trip as (insert into public.trips (route_id, bus_id, bus_type, departure_at, status, last_checkpoint_id, last_checkpoint_at, last_lat, last_lng, confidence_status)
           select ${routeId}, ${busId}::uuid, ${busType}, ${departureAt}::timestamptz, 'active', ${origin.id}::uuid, ${departureAt}::timestamptz, ${origin.lat}, ${origin.lng}, 'verified'
           from eligible returning id, route_id, bus_type, departure_at, status, last_checkpoint_id, last_checkpoint_at, confidence_status),
         creator_session as (insert into public.trip_creator_sessions (trip_id, spotter_id) select id, ${spotterId}::uuid from new_trip returning trip_id),
-        departure_sighting as (insert into public.sightings (trip_id, checkpoint_id, spotter_id, kind, lat, lng, distance_meters, is_verified, confidence_status, verified_at, idempotency_key)
-          select id, ${origin.id}::uuid, ${spotterId}::uuid, 'departure', ${origin.lat}, ${origin.lng}, ${Math.round(originDistance * 10) / 10}, true, 'verified', ${departureAt}::timestamptz, ${requestId}::uuid from new_trip returning id)
+        departure_sighting as (insert into public.sightings (trip_id, checkpoint_id, spotter_id, reporter_id, kind, lat, lng, distance_meters, is_verified, confidence_status, verified_at, idempotency_key)
+          select id, ${origin.id}::uuid, ${spotterId}::uuid, ${reporter.reporterId}::uuid, 'departure', ${origin.lat}, ${origin.lng}, ${Math.round(originDistance * 10) / 10}, true, 'verified', ${departureAt}::timestamptz, ${requestId}::uuid from new_trip returning id)
         select new_trip.* from new_trip cross join creator_session cross join departure_sighting
       `
     ], { isolationLevel: 'ReadCommitted' });
     const tripRows = transactionResults[1] ?? [];
     const trip = tripRows[0] as Record<string, unknown> | undefined;
     if (!trip) {
-      const rateLimited = await sql`select id from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'departure' and created_at > ${rateSince}::timestamptz limit 1`;
+      const rateLimited = await sql`select id from public.sightings where kind = 'departure' and created_at > ${rateSince}::timestamptz and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid)) limit 1`;
       if (rateLimited.length) return jsonError('Please wait 2 minutes before logging another terminal departure from this browser.', 429, 'DEPARTURE_RATE_LIMIT');
       return jsonError('The departure was not created because the request was stale or already used. Refresh and retry.', 409, 'DEPARTURE_CONFLICT');
     }
