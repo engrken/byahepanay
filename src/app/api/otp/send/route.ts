@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import nodemailer from 'nodemailer';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { jsonError, isSameOriginRequest } from '@/lib/http';
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
   if (!isSameOriginRequest(request)) return jsonError('Cross-origin requests are not allowed.', 403, 'CROSS_SITE_REQUEST');
   const spotterId = getSpotterSessionId(request);
   if (!spotterId) return jsonError('Secure browser session required.', 401, 'SESSION_REQUIRED');
-  if (!isEmailOtpConfigured()) return jsonError('Email OTP delivery is not configured yet. Add RESEND_API_KEY and EMAIL_FROM in Vercel.', 503, 'OTP_PROVIDER_NOT_CONFIGURED');
+  if (!isEmailOtpConfigured()) return jsonError('Gmail SMTP is not configured yet. Add GMAIL_USER and GMAIL_APP_PASSWORD in Vercel.', 503, 'OTP_PROVIDER_NOT_CONFIGURED');
 
   const sql = getDb();
   if (!sql) return jsonError('Reporting database is unavailable.', 503, 'DATABASE_UNAVAILABLE');
@@ -53,37 +54,42 @@ export async function POST(request: NextRequest) {
       (id, spotter_id, email_hash, email_masked, code_hash, expires_at)
       values (${challengeId}::uuid, ${spotterId}::uuid, ${emailHash}, ${maskedEmail}, ${codeHash}, now() + interval '10 minutes')`;
 
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY!}`,
-        'Content-Type': 'application/json',
-        'Idempotency-Key': challengeId,
-      },
-      body: JSON.stringify({
-        from: process.env.EMAIL_FROM!,
-        to: [email],
+    const gmailUser = process.env.GMAIL_USER!.trim();
+    const gmailAppPassword = process.env.GMAIL_APP_PASSWORD!.replace(/\s+/g, '');
+    const mailer = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: { user: gmailUser, pass: gmailAppPassword },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+    });
+
+    try {
+      const delivery = await mailer.sendMail({
+        from: { name: 'ByahePanay', address: gmailUser },
+        to: email,
         subject: 'Your ByahePanay verification code',
         text: `Your ByahePanay verification code is ${code}. It expires in 10 minutes. If you did not request this code, you can ignore this email.`,
         html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:24px auto;padding:24px;border:1px solid #e5e7eb;border-radius:14px;color:#172b3a"><p style="font-size:12px;letter-spacing:1.5px;font-weight:700;color:#64748b">BYAHEPANAY · REPORTER VERIFICATION</p><h1 style="font-size:22px;margin:12px 0">Your verification code</h1><p>Enter this one-time code in the ByahePanay app:</p><p style="font-size:32px;letter-spacing:8px;font-weight:700;padding:14px 0">${code}</p><p style="color:#64748b">This code expires in 10 minutes. If you did not request it, you can ignore this email.</p></div>`,
-      }),
-      cache: 'no-store',
-    });
-    const result = await response.json().catch(() => ({})) as { id?: string; message?: string };
-    await sql`update public.email_verification_events set provider_status = ${response.ok ? 'sent' : 'provider_error'} where id = ${eventId}::uuid`;
-    if (!response.ok) {
+      });
+      await sql`update public.email_verification_events set provider_status = 'sent' where id = ${eventId}::uuid`;
+      return NextResponse.json({
+        sent: true,
+        emailMasked: maskedEmail,
+        expiresInMinutes: 10,
+        message: `A verification code was sent to ${maskedEmail}. It expires in 10 minutes.`,
+        messageId: delivery.messageId,
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch (error) {
+      await sql`update public.email_verification_events set provider_status = 'provider_error' where id = ${eventId}::uuid`;
       await sql`update public.email_verification_challenges set consumed_at = now() where id = ${challengeId}::uuid`;
-      console.error('Resend OTP delivery failed', { status: response.status });
-      return jsonError('The verification email could not be sent. Check the address or contact the app administrator.', 502, 'OTP_DELIVERY_FAILED');
+      console.error('Gmail SMTP OTP delivery failed', { error: error instanceof Error ? error.message : 'Unknown SMTP error' });
+      return jsonError('The verification email could not be sent. Check the Gmail SMTP setup or try again later.', 502, 'OTP_DELIVERY_FAILED');
+    } finally {
+      mailer.close();
     }
-
-    return NextResponse.json({
-      sent: true,
-      emailMasked: maskedEmail,
-      expiresInMinutes: 10,
-      message: `A verification code was sent to ${maskedEmail}. It expires in 10 minutes.`,
-      providerMessageId: result.id ?? null,
-    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('Email OTP send failed', error);
     return jsonError('Could not send an email verification code. Please try again.', 502, 'OTP_DELIVERY_FAILED');

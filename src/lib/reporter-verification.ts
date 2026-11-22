@@ -8,7 +8,7 @@ function getHashingSecret() {
 }
 
 export function isEmailOtpConfigured() {
-  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+  return Boolean(process.env.GMAIL_USER?.trim() && process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, ''));
 }
 
 export function isEmailVerificationRequired() {
