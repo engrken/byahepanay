@@ -31,11 +31,16 @@ test('a selected mid-route checkpoint such as Bolo resolves to its database UUID
   assert.equal(checkpoint?.id, '33333333-3333-4333-8333-333333333333');
 });
 
-test('static corridor codes are never accepted as database checkpoint IDs', () => {
+test('legacy static corridor codes resolve to the matching live database UUID', () => {
   assert.equal(isPersistedCheckpointId('bolo'), false);
   const checkpoint = resolveDepartureCheckpoint(route, 'bolo');
-  assert.equal(checkpoint?.name, 'Pueblo de Panay Terminal');
+  assert.equal(checkpoint?.name, 'Bolo');
+  assert.equal(checkpoint?.id, '33333333-3333-4333-8333-333333333333');
   assert.ok(isPersistedCheckpointId(checkpoint?.id ?? ''));
+});
+
+test('unknown non-empty selections are not silently replaced by another checkpoint', () => {
+  assert.equal(resolveDepartureCheckpoint(route, 'missing-stop'), null);
 });
 
 test('a route with no startable checkpoints has no departure checkpoint', () => {
