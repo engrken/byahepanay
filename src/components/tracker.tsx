@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ROUTES, routeForTab } from '@/lib/corridors';
-import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
-import { nearestCheckpoint, formatDistance } from '@/lib/geo';
+import { estimateTimeline, estimateLandmarkEta, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
+import { nearestCheckpoint, nearestCheckpointLocation, formatDistance } from '@/lib/geo';
 import { MAX_NEAREST_STOP_DISTANCE_METERS } from '@/lib/presence';
 import OnboardingGuide from '@/components/onboarding-guide';
 import CommunityPresence from '@/components/community-presence';
@@ -58,6 +58,8 @@ export default function Tracker() {
   const [kaliboVia, setKaliboVia] = useState<'mambusao' | 'sapian'>('mambusao');
   const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
   const [startCheckpointId, setStartCheckpointId] = useState('');
+  const [startLandmarkId, setStartLandmarkId] = useState('');
+  const [selectedLandmarkIds, setSelectedLandmarkIds] = useState<Record<string, string>>({});
   const [waitStopId, setWaitStopId] = useState<string | null>(null);
   const [message, setMessage] = useState<UiMessage>(null);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -210,6 +212,7 @@ export default function Tracker() {
     [persistedSelectedRoute, startCheckpointId],
   );
   const departureStartCheckpointId = departureStartCheckpoint?.id ?? '';
+  const departureStartLandmark = departureStartCheckpoint?.landmarks?.find((landmark) => landmark.id === startLandmarkId) ?? null;
   const relatedTrips = useMemo(() => board.trips
     .filter((trip) => (routeMatchesTab(trip.route_id, tab, direction) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab, direction) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
     .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab, direction]);
@@ -348,7 +351,7 @@ export default function Tracker() {
       const response = await fetch('/api/departures', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
         body: JSON.stringify({
-          requestId: createRequestId(), routeId: selectedRoute.id, checkpointId: startCheckpoint.id,
+          requestId: createRequestId(), routeId: selectedRoute.id, checkpointId: startCheckpoint.id, landmarkId: departureStartLandmark?.id,
           busType: departureType, bodyNumber: departureBody.trim() || undefined,
           plateNumber: departurePlate.trim() || undefined,
           lat: position.coords.latitude, lng: position.coords.longitude,
@@ -358,7 +361,7 @@ export default function Tracker() {
       if (!response.ok) throw new Error(result.error ?? 'Could not start trip.');
       setDepartureOpen(false);
       setWaitStopId(startCheckpoint.id);
-      setMessage({ kind: 'success', text: `${departureType === 'aircon' ? 'Aircon' : 'Ordinary'} trip started at ${startCheckpoint.name} on ${selectedRoute.name}.` });
+      setMessage({ kind: 'success', text: `${departureType === 'aircon' ? 'Aircon' : 'Ordinary'} trip started at ${departureStartLandmark?.name ?? startCheckpoint.name} (${startCheckpoint.name}) on ${selectedRoute.name}.` });
       setDepartureBody(''); setDeparturePlate('');
       await refreshBoard();
     } catch (error) {
@@ -376,6 +379,7 @@ export default function Tracker() {
         ? targetStop
         : startableCheckpoints[0];
       setStartCheckpointId(defaultCheckpoint?.id ?? '');
+      setStartLandmarkId('');
       setDepartureOpen(true);
       setMessage({ kind: 'info', text: 'No active bus is listed yet. You can be the first contributor: choose where you saw the bus and start its trip.' });
       return;
@@ -386,7 +390,7 @@ export default function Tracker() {
     }
     setBusy(true);
     navigator.geolocation.getCurrentPosition(async (position) => {
-      const nearest = nearestCheckpoint(position.coords, activeRoute.checkpoints);
+      const nearest = nearestCheckpointLocation(position.coords, activeRoute.checkpoints);
       if (!nearest) {
         setBusy(false);
         setMessage({ kind: 'error', text: 'No checkpoint coordinates are available for this corridor.' });
@@ -394,11 +398,11 @@ export default function Tracker() {
       }
       if (nearest.distanceMeters > 300) {
         setBusy(false);
-        setMessage({ kind: 'error', text: `Nearest stop is ${nearest.checkpoint.name}, ${formatDistance(nearest.distanceMeters)} away. Move within 300 m of a mapped checkpoint to report.` });
+        setMessage({ kind: 'error', text: `Nearest mapped location is ${nearest.landmark?.name ?? nearest.checkpoint.name}, ${formatDistance(nearest.distanceMeters)} away. Move within 300 m of a checkpoint or its landmark to report.` });
         return;
       }
       const sent = await submitSighting({
-        tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
+        tripId: activeTrip.id, checkpointId: nearest.checkpoint.id, landmarkId: nearest.landmark?.id,
         lat: position.coords.latitude, lng: position.coords.longitude,
         kind: 'roadside', gpsAccuracyM: position.coords.accuracy,
       });
@@ -483,11 +487,11 @@ export default function Tracker() {
       if (!navigator.geolocation) return;
       navigator.geolocation.getCurrentPosition(async (position) => {
         if (!mounted) return;
-        const nearest = nearestCheckpoint(position.coords, activeRoute.checkpoints);
+        const nearest = nearestCheckpointLocation(position.coords, activeRoute.checkpoints);
         if (!nearest || nearest.distanceMeters > 300) return;
         if (nearest.checkpoint.id === riderTripLastCheckpointId || nearest.checkpoint.id === lastBeaconCheckpointRef.current) return;
         const sent = await submitSighting({
-          tripId: riderTripId, checkpointId: nearest.checkpoint.id,
+          tripId: riderTripId, checkpointId: nearest.checkpoint.id, landmarkId: nearest.landmark?.id,
           lat: position.coords.latitude, lng: position.coords.longitude,
           kind: 'rider_beacon', gpsAccuracyM: position.coords.accuracy,
         });
@@ -574,6 +578,7 @@ export default function Tracker() {
     setDirection(inbound ? 'inbound' : 'outbound');
     const persistedRoute = board.routes.find((candidate) => candidate.id === routeId);
     setStartCheckpointId(persistedRoute?.checkpoints[0]?.id ?? '');
+    setStartLandmarkId('');
     if (baseId === 'iloilo_passi') setTab('iloilo');
     else if (baseId === 'tapaz') setTab('tapaz');
     else if (baseId === 'estancia') setTab('estancia');
@@ -791,12 +796,48 @@ export default function Tracker() {
                 : item.state === 'pending' ? '!'
                 : item.state === 'stale' ? '—'
                   : item.state === 'approaching' ? '🚌' : '·';
+            const selectedLandmarkId = selectedLandmarkIds[item.checkpoint.id] ?? '';
+            const selectedLandmark = item.checkpoint.landmarks?.find((landmark) => landmark.id === selectedLandmarkId) ?? null;
+            const landmarkEstimate = activeTrip && timeline && selectedLandmark
+              ? estimateLandmarkEta(activeTrip, activeRoute.checkpoints, timeline, selectedLandmark, clock)
+              : null;
+            const landmarkEtaText = !selectedLandmark
+              ? ''
+              : !landmarkEstimate
+                ? 'Start a trip to estimate this landmark'
+                : landmarkEstimate.status === 'estimated' && landmarkEstimate.eta
+                  ? `Landmark ETA · ${formatTime(landmarkEstimate.eta)} · ${landmarkEstimate.minutesAway} min`
+                  : landmarkEstimate.status === 'passed'
+                    ? 'This landmark is already behind the bus'
+                    : landmarkEstimate.status === 'needs_review'
+                      ? `ETA withheld · pin is ${formatDistance(landmarkEstimate.distanceFromRouteMeters)} from the planned route`
+                      : 'Landmark ETA unavailable while tracking is paused';
             return <div className="timeline-row" key={item.checkpoint.id}>
               <div className="timeline-track"><span className={`timeline-dot ${item.state}`}>{dotText}</span></div>
-              <button className={`wait-button ${waitStopId === item.checkpoint.id ? 'selected' : ''}`} onClick={() => setWaitStopId(item.checkpoint.id)}>
-                <div className={`checkpoint-name ${item.state === 'upcoming' || item.state === 'stale' ? 'dim' : ''}`}>{item.checkpoint.name}</div>
-                <div className="checkpoint-status">{stateText}</div>
-              </button>
+              <div className="checkpoint-stop-content">
+                <button className={`wait-button ${waitStopId === item.checkpoint.id ? 'selected' : ''}`} onClick={() => setWaitStopId(item.checkpoint.id)}>
+                  <div className={`checkpoint-name ${item.state === 'upcoming' || item.state === 'stale' ? 'dim' : ''}`}>{item.checkpoint.name}</div>
+                  <div className="checkpoint-status">Barangay ETA · {stateText}</div>
+                </button>
+                {item.checkpoint.landmarks?.length ? <div className="landmark-eta-control">
+                  <label className="sr-only" htmlFor={`landmark-${item.checkpoint.id}`}>Landmark in {item.checkpoint.name}</label>
+                  <select
+                    id={`landmark-${item.checkpoint.id}`}
+                    value={selectedLandmarkId}
+                    onChange={(event) => {
+                      setSelectedLandmarkIds((current) => ({ ...current, [item.checkpoint.id]: event.target.value }));
+                      setWaitStopId(item.checkpoint.id);
+                    }}
+                  >
+                    <option value="">Landmark ETA (optional)</option>
+                    {item.checkpoint.landmarks.map((landmark) => <option key={landmark.id} value={landmark.id}>{landmark.name}</option>)}
+                  </select>
+                  {selectedLandmark && <div className="landmark-eta-detail">
+                    <span>{landmarkEtaText}</span>
+                    <a href={`https://www.google.com/maps/search/?api=1&query=${selectedLandmark.lat},${selectedLandmark.lng}`} target="_blank" rel="noreferrer">Open map pin</a>
+                  </div>}
+                </div> : null}
+              </div>
               <div className="checkpoint-eta">
                 <strong>{item.state === 'passed' ? '✓' : item.state === 'pending' ? 'Pending' : item.eta ? formatTime(item.eta) : '—'}</strong>
                 <span>{item.state === 'passed'
@@ -846,6 +887,7 @@ export default function Tracker() {
               ? targetStop
               : startableCheckpoints[0];
             setStartCheckpointId(defaultCheckpoint?.id ?? '');
+            setStartLandmarkId('');
             setDepartureOpen(true);
           }} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Start tracking a bus from any mapped checkpoint">
             <span className="action-icon" aria-hidden="true">🏁</span>
@@ -882,9 +924,17 @@ export default function Tracker() {
               <option value="iloilo_passi_return">Iloilo → Roxas via Passi</option><option value="kalibo_mambusao_return">Kalibo → Roxas via Mambusao</option><option value="kalibo_sapian_return">Kalibo → Roxas via Sapian</option><option value="tapaz_return">Calinog → Roxas via Tapaz</option><option value="estancia_return">Estancia → Roxas</option>
             </optgroup>
           </select></div>
-          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-checkpoint">Where did you first see this bus?</label><select id="departure-checkpoint" value={departureStartCheckpointId} onChange={(event) => setStartCheckpointId(event.target.value)} required>
+          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-checkpoint">Barangay / main checkpoint</label><select id="departure-checkpoint" value={departureStartCheckpointId} onChange={(event) => { setStartCheckpointId(event.target.value); setStartLandmarkId(''); }} required>
             {startableCheckpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
-          </select><p className="verification-footnote">Choose the mapped roadside stop where you are watching. GPS must be within 300 m to verify the start.</p>{!board.configured && <p className="verification-footnote">Live checkpoint data is not ready. Tap Refresh before starting a trip.</p>}</div>
+          </select><p className="verification-footnote">The barangay remains the main route checkpoint and ETA.</p>{!board.configured && <p className="verification-footnote">Live checkpoint data is not ready. Tap Refresh before starting a trip.</p>}</div>
+          {departureStartCheckpoint?.landmarks?.length ? <div className="field" style={{ marginBottom: 10 }}>
+            <label htmlFor="departure-landmark">Landmark near your waiting location · optional</label>
+            <select id="departure-landmark" value={startLandmarkId} onChange={(event) => setStartLandmarkId(event.target.value)}>
+              <option value="">Use the main barangay checkpoint</option>
+              {departureStartCheckpoint.landmarks.map((landmark) => <option key={landmark.id} value={landmark.id}>{landmark.name}</option>)}
+            </select>
+            {departureStartLandmark && <p className="verification-footnote"><a href={`https://www.google.com/maps/search/?api=1&query=${departureStartLandmark.lat},${departureStartLandmark.lng}`} target="_blank" rel="noreferrer">Open selected landmark pin</a>. GPS will be checked within 300 m of this landmark.</p>}
+          </div> : null}
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-type">Bus type</label><select id="departure-type" value={departureType} onChange={(event) => setDepartureType(event.target.value as BusType)}><option value="aircon">Aircon · Deluxe</option><option value="ordinary">Regular · Ordinary</option></select></div>
           <div className="form-grid">
             <div className="field"><label htmlFor="departure-body">Body number · optional</label><input id="departure-body" value={departureBody} onChange={(event) => setDepartureBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} /></div>

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ROUTES } from '@/lib/corridors';
+import { attachLandmarksToRoute } from '@/lib/checkpoint-landmarks';
 import { getDb } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,7 @@ type RouteLinkRow = {
 export async function GET() {
   const sql = getDb();
   if (!sql) {
-    return NextResponse.json({ configured: false, routes: ROUTES, trips: [] }, {
+    return NextResponse.json({ configured: false, routes: ROUTES.map(attachLandmarksToRoute), trips: [] }, {
       headers: { 'Cache-Control': 'no-store' },
     });
   }
@@ -70,7 +71,7 @@ export async function GET() {
           } : null;
         })
         .filter((point): point is NonNullable<typeof point> => point !== null),
-    }));
+    })).map(attachLandmarksToRoute);
 
     return NextResponse.json({ configured: true, routes, trips: tripRows }, {
       headers: { 'Cache-Control': 'no-store' },

@@ -5,6 +5,7 @@ import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/
 import { getSpotterSessionId } from '@/lib/spotter-session';
 import { requireReporterIdentity } from '@/lib/reporter-verification';
 import { recalibrateSegment } from '@/lib/calibration';
+import { findCheckpointLandmark, LANDMARK_ENABLED_ROUTE_IDS } from '@/lib/checkpoint-landmarks';
 
 export const dynamic = 'force-dynamic';
 const MAX_GEOFENCE_METERS = 300;
@@ -12,7 +13,7 @@ const MAX_SPEED_KMH = 95;
 const RATE_LIMIT_MINUTES = 5;
 
 interface SightingPayload {
-  tripId?: string; checkpointId?: string; lat?: number; lng?: number;
+  tripId?: string; checkpointId?: string; landmarkId?: string; lat?: number; lng?: number;
   kind?: 'roadside' | 'rider_beacon'; requestId?: string; riderStatus?: string; observedAt?: string; gpsAccuracyM?: number;
 }
 type TripRow = {
@@ -91,6 +92,14 @@ export async function POST(request: NextRequest) {
     const checkpoint = checkpointRows[0] as CheckpointRow | undefined;
     if (!trip || trip.status !== 'active') return jsonError('This trip is no longer active.', 404);
     if (!checkpoint) return jsonError('Checkpoint not found.');
+    const selectedLandmark = body.landmarkId ? findCheckpointLandmark(body.landmarkId) : null;
+    const landmarkRouteSupported = LANDMARK_ENABLED_ROUTE_IDS.includes(trip.route_id as typeof LANDMARK_ENABLED_ROUTE_IDS[number]) ||
+      Boolean(trip.route_candidate && LANDMARK_ENABLED_ROUTE_IDS.includes(trip.route_candidate as typeof LANDMARK_ENABLED_ROUTE_IDS[number]));
+    if (body.landmarkId && (
+      !landmarkRouteSupported || !selectedLandmark || selectedLandmark.checkpointCode !== checkpoint.code
+    )) {
+      return jsonError('The selected landmark does not belong to this checkpoint or supported corridor.', 422, 'LANDMARK_CHECKPOINT_MISMATCH');
+    }
 
     if (body.kind === 'rider_beacon') {
       const riderSession = await sql`
@@ -104,11 +113,11 @@ export async function POST(request: NextRequest) {
 
     const allowLocalGeofenceBypass = process.env.NODE_ENV !== 'production' && process.env.BYPASS_GEOFENCE === 'true';
     const distanceMeters = haversineKm(
-      { lat: body.lat, lng: body.lng }, { lat: checkpoint.lat, lng: checkpoint.lng },
+      { lat: body.lat, lng: body.lng }, selectedLandmark ?? { lat: checkpoint.lat, lng: checkpoint.lng },
     ) * 1000;
     if (!allowLocalGeofenceBypass && distanceMeters > MAX_GEOFENCE_METERS) {
       return jsonError(
-        `GPS is ${Math.round(distanceMeters)} m from ${checkpoint.name}; sightings must be within ${MAX_GEOFENCE_METERS} m.`,
+        `GPS is ${Math.round(distanceMeters)} m from ${selectedLandmark?.name ?? checkpoint.name}; sightings must be within ${MAX_GEOFENCE_METERS} m.`,
         422, 'OUTSIDE_GEOFENCE',
       );
     }
