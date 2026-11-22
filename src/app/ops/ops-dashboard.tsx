@@ -99,9 +99,12 @@ export default function OpsDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadData();
+    const initialLoad = window.setTimeout(() => void loadData(), 0);
     const refresh = window.setInterval(() => void loadData(), 30_000);
-    return () => window.clearInterval(refresh);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(refresh);
+    };
   }, [loadData]);
 
   const markInactive = async (trip: ActiveTrip) => {
