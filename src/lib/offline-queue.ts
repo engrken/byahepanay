@@ -5,6 +5,7 @@ export interface QueuedSighting {
   lng: number;
   kind: 'roadside' | 'rider_beacon';
   requestId?: string;
+  gpsAccuracyM?: number;
   /** Legacy queue records may include this untrusted value; server ignores it. */
   spotterId?: string;
   riderStatus?: string;
@@ -76,7 +77,7 @@ export async function flushSightingQueue(): Promise<{ sent: number; remaining: n
       if (entry.spotterId) delete entry.spotterId;
       await new Promise<void>((resolve,reject)=>{const tx=db.transaction(STORE_NAME,'readwrite');tx.objectStore(STORE_NAME).put(entry);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
       let response: Response;
-      try { response = await fetch('/api/sightings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ tripId: entry.tripId, checkpointId: entry.checkpointId, lat: entry.lat, lng: entry.lng, kind: entry.kind, requestId: entry.requestId, riderStatus: entry.riderStatus, observedAt: entry.queuedAt }) }); } catch { break; }
+      try { response = await fetch('/api/sightings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ tripId: entry.tripId, checkpointId: entry.checkpointId, lat: entry.lat, lng: entry.lng, kind: entry.kind, requestId: entry.requestId, riderStatus: entry.riderStatus, gpsAccuracyM: entry.gpsAccuracyM, observedAt: entry.queuedAt }) }); } catch { break; }
       if (response.ok) { await deleteQueuedRecord(db, entry.queueId); sent += 1; }
       else if (response.status >= 400 && response.status < 500 && response.status !== 429) await deleteQueuedRecord(db, entry.queueId);
       else break;

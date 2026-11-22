@@ -9,6 +9,7 @@ import type { BoardData, BusType, Checkpoint, CorridorTab, RouteDefinition, Trip
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
 type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;
+type PhoneOtpState = { configured: boolean; required: boolean; verified: boolean; phoneMasked: string | null };
 
 async function ensureSpotterSession() {
   const response = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
@@ -50,6 +51,11 @@ export default function Tracker() {
   const [waitStopId, setWaitStopId] = useState<string | null>(null);
   const [message, setMessage] = useState<UiMessage>(null);
   const [queuedCount, setQueuedCount] = useState(0);
+  const [otpStatus, setOtpStatus] = useState<PhoneOtpState>({ configured: false, required: false, verified: false, phoneMasked: null });
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpBusy, setOtpBusy] = useState(false);
   const [departureOpen, setDepartureOpen] = useState(false);
   const [departureType, setDepartureType] = useState<BusType>('aircon');
   const [departureBody, setDepartureBody] = useState('');
@@ -65,6 +71,13 @@ export default function Tracker() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const lastBeaconCheckpointRef = useRef<string | null>(null);
+
+  const refreshOtpStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/otp/status', { cache: 'no-store', credentials: 'same-origin' });
+      if (response.ok) setOtpStatus(await response.json() as PhoneOtpState);
+    } catch { /* Keep the last known verification state. */ }
+  }, []);
 
   const refreshBoard = useCallback(async () => {
     try {
@@ -132,7 +145,7 @@ export default function Tracker() {
         window.requestAnimationFrame(() => setBoard(cachedBoard));
       }
     } catch { /* Ignore invalid or unavailable local cache. */ }
-    void ensureSpotterSession().catch(() => setMessage({ kind: 'warning', text: 'Secure reporting is unavailable until a session can be initialized.' }));
+    void ensureSpotterSession().then(refreshOtpStatus).catch(() => setMessage({ kind: 'warning', text: 'Secure reporting is unavailable until a session can be initialized.' }));
     const boardFrame = window.requestAnimationFrame(() => { void refreshBoard(); });
     void getQueuedSightingCount().then(setQueuedCount);
     if ('serviceWorker' in navigator) {
@@ -152,7 +165,7 @@ export default function Tracker() {
       window.cancelAnimationFrame(boardFrame);
       window.removeEventListener('online', online);
     };
-  }, [refreshBoard]);
+  }, [refreshBoard, refreshOtpStatus]);
 
   useEffect(() => {
     // Neon Realtime is optional; poll the server-side Neon board while the page is visible.
@@ -330,7 +343,7 @@ export default function Tracker() {
       const sent = await submitSighting({
         tripId: activeTrip.id, checkpointId: nearest.checkpoint.id,
         lat: position.coords.latitude, lng: position.coords.longitude,
-        kind: 'roadside', 
+        kind: 'roadside', gpsAccuracyM: position.coords.accuracy,
       });
       if (sent) setWaitStopId(nearest.checkpoint.id);
       setBusy(false);
@@ -419,7 +432,7 @@ export default function Tracker() {
         const sent = await submitSighting({
           tripId: riderTripId, checkpointId: nearest.checkpoint.id,
           lat: position.coords.latitude, lng: position.coords.longitude,
-          kind: 'rider_beacon', 
+          kind: 'rider_beacon', gpsAccuracyM: position.coords.accuracy,
         });
         if (sent && mounted) {
           lastBeaconCheckpointRef.current = nearest.checkpoint.id;
@@ -463,6 +476,31 @@ export default function Tracker() {
     } catch (error) {
       setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Could not join Rider Beacon mode.' });
     } finally { setBusy(false); }
+  };
+
+  const requestPhoneOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setOtpBusy(true);
+    try {
+      await ensureSpotterSession();
+      const response = await fetch('/api/otp/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ phoneNumber }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; phoneMasked?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Could not send verification code.');
+      setOtpSent(true); setMessage({ kind: 'success', text: result.message ?? `Code sent to ${result.phoneMasked}.` });
+    } catch (error) { setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Could not send verification code.' }); }
+    finally { setOtpBusy(false); }
+  };
+
+  const verifyPhoneOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setOtpBusy(true);
+    try {
+      await ensureSpotterSession();
+      const response = await fetch('/api/otp/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ phoneNumber, code: otpCode }) });
+      const result = await response.json().catch(() => ({})) as { error?: string; message?: string; phoneMasked?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Phone verification failed.');
+      setOtpStatus((current) => ({ ...current, verified: true, phoneMasked: result.phoneMasked ?? null }));
+      setOtpCode(''); setOtpSent(false); setMessage({ kind: 'success', text: result.message ?? 'Phone number verified.' });
+    } catch (error) { setMessage({ kind: 'error', text: error instanceof Error ? error.message : 'Phone verification failed.' }); }
+    finally { setOtpBusy(false); }
   };
 
   const selectedTab = (value: CorridorTab) => {
@@ -514,6 +552,17 @@ export default function Tracker() {
       </header>
 
       <div className="page-content" id="main-content">
+        <section className="card verification-card" aria-labelledby="phone-verification-title">
+          <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="phone-verification-title">Phone verification</h2></div>{otpStatus.verified ? <span className="verified-pill">✓ SMS verified</span> : <span className="confidence unverified">Not verified</span>}</div>
+          {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.phoneMasked}. Verified phone identities help distinguish separate community reporters.</p> : <>
+            <p className="verification-copy">Verify a Philippine mobile number by SMS. We store a keyed phone hash and masked number—not your OTP or full phone number. {otpStatus.required ? 'Verification is required for departures and sightings.' : 'Verification is currently optional while the pilot configures SMS delivery.'}</p>
+            {!otpStatus.configured ? <div className="notice info">SMS OTP is ready in the app, but the administrator must configure Twilio Verify before codes can be sent.</div> : <>
+              <form className="otp-form" onSubmit={requestPhoneOtp}><div className="field"><label htmlFor="otp-phone">Philippine mobile number</label><input id="otp-phone" type="tel" inputMode="tel" autoComplete="tel" value={phoneNumber} onChange={(event)=>setPhoneNumber(event.target.value)} placeholder="09XXXXXXXXX or +639XXXXXXXXX" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send SMS OTP'}</button></form>
+              {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyPhoneOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,10))} inputMode="numeric" autoComplete="one-time-code" placeholder="Enter SMS code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length<4}>{otpBusy?'Verifying…':'Verify number'}</button></form>}
+              <p className="verification-footnote">Codes expire after 10 minutes. SMS charges or carrier restrictions may apply.</p>
+            </>}
+          </>}
+        </section>
         <section className="corridor-wrap" aria-label="Choose travel corridor">
           <div className="corridor-tabs">
             <button className={`corridor-tab ${tab === 'iloilo' ? 'active' : ''}`} onClick={() => selectedTab('iloilo')}>Iloilo<br />(Passi)</button>
@@ -666,17 +715,17 @@ export default function Tracker() {
 
       <nav className="bottom-bar" aria-label="Quick reporting actions">
         <div className="bottom-actions">
-          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy} aria-label="Log a bus departure from Pueblo">
+          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Log a bus departure from Pueblo">
             <span className="action-icon" aria-hidden="true">🏁</span>
             <span className="action-label">Departure</span>
             <span className="action-copy">Left Pueblo</span>
           </button>
-          <button className="action-button main" onClick={reportRoadside} disabled={busy} aria-label="Report a bus that just passed this checkpoint">
+          <button className="action-button main" onClick={reportRoadside} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Report a bus that just passed this checkpoint">
             <span className="action-icon" aria-hidden="true">👀</span>
             <span className="action-label">Bus sighting</span>
             <span className="action-copy">Passed here</span>
           </button>
-          <button className="action-button beacon" onClick={startRiderMode} disabled={busy} aria-label="Start Rider Beacon mode">
+          <button className="action-button beacon" onClick={startRiderMode} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Start Rider Beacon mode">
             <span className="action-icon" aria-hidden="true">🚌</span>
             <span className="action-label">Rider Beacon</span>
             <span className="action-copy">I’m on this bus</span>
