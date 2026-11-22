@@ -31,7 +31,7 @@ create table if not exists public.trips (
   bus_id uuid references public.buses(id) on delete set null,
   bus_type text not null check (bus_type in ('ordinary', 'aircon')),
   departure_at timestamptz not null default now(),
-  status text not null default 'active' check (status in ('active', 'arrived', 'cancelled')),
+  status text not null default 'active' check (status in ('active', 'arrived', 'cancelled', 'inactive')),
   last_checkpoint_id uuid references public.checkpoints(id), last_checkpoint_at timestamptz,
   last_lat double precision, last_lng double precision,
   confidence_status text not null default 'verified' check (confidence_status in ('scheduled', 'unverified', 'verified')),
@@ -39,7 +39,10 @@ create table if not exists public.trips (
   route_locked boolean not null default false, route_candidate text references public.routes(id),
   rider_status text, rider_status_at timestamptz,
   delay_minutes integer not null default 0 check (delay_minutes >= 0),
-  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  inactive_at timestamptz, inactive_by_spotter_id uuid, inactive_reason text,
+  check (status <> 'inactive' or (inactive_at is not null and inactive_by_spotter_id is not null
+    and inactive_reason is not null and char_length(btrim(inactive_reason)) between 10 and 500))
 );
 create table if not exists public.trip_creator_sessions (
   trip_id uuid primary key references public.trips(id) on delete cascade,
@@ -49,6 +52,15 @@ create table if not exists public.trip_rider_sessions (
   trip_id uuid not null references public.trips(id) on delete cascade, spotter_id uuid not null,
   joined_at timestamptz not null default now(), last_seen_at timestamptz not null default now(),
   primary key (trip_id, spotter_id)
+);
+create table if not exists public.trip_status_events (
+  id uuid primary key default gen_random_uuid(),
+  trip_id uuid not null references public.trips(id) on delete cascade,
+  previous_status text not null check (previous_status in ('active','arrived','cancelled','inactive')),
+  new_status text not null check (new_status in ('arrived','cancelled','inactive')),
+  reason text not null check (char_length(btrim(reason)) between 10 and 500),
+  actor_spotter_id uuid not null,
+  created_at timestamptz not null default now()
 );
 create table if not exists public.reporter_identities (
   id uuid primary key default gen_random_uuid(),
@@ -121,6 +133,8 @@ create table if not exists public.ops_alerts (
 create index if not exists route_checkpoints_route_sequence_idx on public.route_checkpoints(route_id, sequence);
 create index if not exists trips_active_route_departure_idx on public.trips(route_id, departure_at desc) where status = 'active';
 create index if not exists trips_updated_at_idx on public.trips(updated_at desc);
+create index if not exists trips_inactive_at_idx on public.trips(inactive_at desc) where status = 'inactive';
+create index if not exists trip_status_events_trip_created_idx on public.trip_status_events(trip_id,created_at desc);
 create unique index if not exists sightings_idempotency_key_uidx on public.sightings(idempotency_key);
 create index if not exists sightings_reporter_time_idx on public.sightings(reporter_id,created_at desc);
 create index if not exists phone_verification_events_session_idx on public.phone_verification_events(spotter_id,event_type,created_at desc);

@@ -1,9 +1,59 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-export const dynamic='force-dynamic';
-export async function GET(){
- const sql=getDb();if(!sql)return NextResponse.json({status:'unavailable',databaseConfigured:false,checkedAt:new Date().toISOString()},{status:503,headers:{'Cache-Control':'no-store'}});
- const started=Date.now();try{const rows=await sql`select (select count(*)::int from public.routes where is_active=true) as route_count,(select count(*)::int from public.trips where status='active') as active_trip_count,(select count(*)::int from public.trips where status='active' and updated_at<now()-interval '90 minutes') as stale_active_trip_count,(select max(created_at) from public.sightings) as latest_sighting_at,(select count(*)::int from public.eta_segment_calibrations where updated_at>now()-interval '90 days') as calibrated_segment_count,(select count(*)::int from public.eta_calibration_samples where created_at>now()-interval '90 days') as calibration_sample_count`;
- const latencyMs=Date.now()-started;const data=rows[0] as Record<string,unknown>;const stale=Number(data.stale_active_trip_count??0);const status=latencyMs>2500||stale>0?'degraded':'healthy';
- return NextResponse.json({status,databaseConfigured:true,databaseLatencyMs:latencyMs,checkedAt:new Date().toISOString(),routes:Number(data.route_count??0),activeTrips:Number(data.active_trip_count??0),staleActiveTrips:stale,latestSightingAt:data.latest_sighting_at,calibratedSegments:Number(data.calibrated_segment_count??0),calibrationSamples:Number(data.calibration_sample_count??0)},{status:status==='healthy'?200:503,headers:{'Cache-Control':'no-store'}});
- }catch(error){console.error('BiyahePanay health check failed',error);return NextResponse.json({status:'unavailable',databaseConfigured:true,checkedAt:new Date().toISOString()},{status:503,headers:{'Cache-Control':'no-store'}});}}
+
+export const dynamic = 'force-dynamic';
+
+export async function GET() {
+  const sql = getDb();
+  if (!sql) {
+    return NextResponse.json(
+      { status: 'unavailable', databaseConfigured: false, checkedAt: new Date().toISOString() },
+      { status: 503, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  const started = Date.now();
+  try {
+    const rows = await sql`
+      select
+        (select count(*)::int from public.routes where is_active = true) as route_count,
+        (select count(*)::int from public.trips where status = 'active') as active_trip_count,
+        (select count(*)::int from public.trips
+          where status = 'active'
+            and coalesce(last_checkpoint_at, departure_at) < now() - interval '90 minutes'
+        ) as stale_active_trip_count,
+        (select max(created_at) from public.sightings) as latest_sighting_at,
+        (select count(*)::int from public.eta_segment_calibrations
+          where updated_at > now() - interval '90 days') as calibrated_segment_count,
+        (select count(*)::int from public.eta_calibration_samples
+          where created_at > now() - interval '90 days') as calibration_sample_count
+    `;
+    const latencyMs = Date.now() - started;
+    const data = rows[0] as Record<string, unknown>;
+    const stale = Number(data.stale_active_trip_count ?? 0);
+    const status = latencyMs > 2500 || stale > 0 ? 'degraded' : 'healthy';
+
+    return NextResponse.json({
+      status,
+      databaseConfigured: true,
+      databaseLatencyMs: latencyMs,
+      checkedAt: new Date().toISOString(),
+      routes: Number(data.route_count ?? 0),
+      activeTrips: Number(data.active_trip_count ?? 0),
+      staleActiveTrips: stale,
+      latestSightingAt: data.latest_sighting_at,
+      calibratedSegments: Number(data.calibrated_segment_count ?? 0),
+      calibrationSamples: Number(data.calibration_sample_count ?? 0),
+      staleTripBasis: 'last_confirmed_checkpoint',
+    }, {
+      status: status === 'healthy' ? 200 : 503,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  } catch (error) {
+    console.error('BiyahePanay health check failed', error);
+    return NextResponse.json(
+      { status: 'unavailable', databaseConfigured: true, checkedAt: new Date().toISOString() },
+      { status: 503, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+}
