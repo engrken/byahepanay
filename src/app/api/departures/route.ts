@@ -43,7 +43,8 @@ export async function POST(request: NextRequest) {
   try {
     const [routeRows, checkpointRows] = await Promise.all([
       sql`select id from public.routes where id = ${routeId} and is_active = true limit 1`,
-      sql`select c.id, c.name, c.lat, c.lng
+      sql`select c.id, c.name, c.lat, c.lng, rc.sequence,
+                 (select max(last.sequence) from public.route_checkpoints last where last.route_id = rc.route_id) as max_sequence
           from public.checkpoints c
           join public.route_checkpoints rc on rc.checkpoint_id = c.id
           where c.id = ${body.checkpointId}::uuid and rc.route_id = ${routeId}
@@ -52,7 +53,8 @@ export async function POST(request: NextRequest) {
     if (!routeRows.length) return jsonError('This corridor is not available. Refresh the route list and try again.', 422);
     if (!checkpointRows.length) return jsonError('That checkpoint is not part of the selected corridor.', 422, 'CHECKPOINT_ROUTE_MISMATCH');
 
-    const origin = checkpointRows[0] as { id: string; name: string; lat: number; lng: number };
+    const origin = checkpointRows[0] as { id: string; name: string; lat: number; lng: number; sequence: number; max_sequence: number };
+    if (Number(origin.sequence) >= Number(origin.max_sequence)) return jsonError('Choose a checkpoint before the destination terminal; this route has no further stops after that point.', 422, 'START_AT_DESTINATION');
     const originDistance = haversineKm({ lat: body.lat, lng: body.lng }, { lat: origin.lat, lng: origin.lng }) * 1000;
     const allowLocalGeofenceBypass = process.env.NODE_ENV !== 'production' && process.env.BYPASS_GEOFENCE === 'true';
     if (!allowLocalGeofenceBypass && originDistance > 300) {
