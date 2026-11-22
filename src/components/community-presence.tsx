@@ -91,8 +91,8 @@ export default function CommunityPresence() {
           <h2 id="community-presence-title">Who’s online now</h2>
           <p>Live community counts, refreshed automatically.</p>
         </div>
-        <span className={counts ? 'presence-live-pill' : 'presence-live-pill pending'}>
-          <span aria-hidden="true" />{counts ? 'LIVE' : 'UPDATING'}
+        <span className={counts && !hasError ? 'presence-live-pill' : 'presence-live-pill pending'}>
+          <span aria-hidden="true" />{hasError ? (counts ? 'STALE' : 'UNAVAILABLE') : counts ? 'LIVE' : 'UPDATING'}
         </span>
       </div>
 
