@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
           from public.route_checkpoints prev join public.route_checkpoints next on next.route_id=prev.route_id and next.sequence=prev.sequence+1
           where prev.route_id=${routeUpdate.routeId} and prev.checkpoint_id=${trip.last_checkpoint_id}::uuid and next.checkpoint_id=${checkpoint.id}::uuid
         ), consensus as (
-          select percentile_cont(0.5) within group(order by extract(epoch from s.created_at)) as median_received_epoch,
+          select percentile_cont(0.5) within group(order by extract(epoch from s.observed_at)) as median_received_epoch,
             count(distinct s.reporter_id)::int as reporter_count, avg(s.gps_accuracy_m) as mean_accuracy
           from public.sightings s where s.trip_id=${trip.id}::uuid and s.checkpoint_id=${checkpoint.id}::uuid and s.is_verified=true
             and s.reporter_id is not null and s.observed_at between ${consensusSince}::timestamptz and ${consensusUntil}::timestamptz
