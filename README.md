@@ -94,18 +94,18 @@ Choose a corridor, then use **Use my location** or select a waiting stop. The ap
 
 - Check every checkpoint's exact highway-side GPS coordinate before enabling the 300 m geofence for commuters. Seed coordinates are approximate municipal/area anchors only.
 - Verify route branch logic, segment/dwell time, and 30-minute cadence against actual trips. Cadence slots are projections, not confirmed dispatches.
-- Test geofence rejection, speed rejection (>95 km/h), stale/out-of-order reports, two-spotter consensus, and Rider Beacon (20–90 km/h).
+- Test geofence rejection, speed rejection (>95 km/h), stale/out-of-order reports, two-reporter consensus, and Rider Beacon (20–90 km/h).
 - Test the offline queue by submitting with airplane mode enabled and reconnecting.
 - Test Add to Home Screen, offline launch, iOS Safari, Wake Lock support, and battery impact.
 - The server only honors `BYPASS_GEOFENCE=true` in local development (`NODE_ENV !== production`). Vercel Production and Preview always enforce the 300 m geofence; no browser-controlled test-mode bypass exists.
 
 **Important:** route timing offsets and GPS points are initial planning estimates. They are not operator-verified and must not be presented as live schedule guarantees. Browser GPS/background sync are best-effort, and anonymous crowdsourcing requires abuse monitoring before high-volume public launch.
 
-## Phone OTP and reporter integrity
-SMS verification uses Twilio Verify. Configure `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`, and `REQUIRE_PHONE_VERIFICATION=true` in Vercel only after a Twilio Verify service is provisioned and tested. Until the provider is configured, OTP is visibly unavailable and signed-session protections continue to operate. The app stores a keyed phone hash and masked number, never the raw number or OTP code.
+## Email OTP and reporter integrity
+Email verification uses the Resend email API. Configure `RESEND_API_KEY`, `EMAIL_FROM` (an address on a domain verified in Resend), and then set `REQUIRE_EMAIL_VERIFICATION=true` in Vercel after delivery has been tested. Until the provider is configured, OTP is visibly unavailable and email verification remains optional. The app stores a keyed email hash and masked address, never the full email address or OTP code. Codes expire after 10 minutes; delivery is limited to four requests per hour per session and per email, with five verification attempts per 10 minutes per session and email. One verified email maps to one reporter identity across browser profiles.
 
 ## Automatic ETA calibration
-Each checkpoint segment is calibrated separately by route and bus type. A sample is accepted only after at least two distinct OTP-verified phone identities confirm a checkpoint, both reports have GPS accuracy recorded, mean accuracy is at most 40 m, the route sequence is adjacent, and elapsed time is plausible. Calibrations use a rolling 90-day window, require eight quality-qualified samples, and use a median with median-absolute-deviation outlier rejection. The 80th percentile is retained for uncertainty reporting. Until a segment qualifies, the initial planning offset remains in use.
+Each checkpoint segment is calibrated separately by route and bus type. A sample is accepted only after at least two distinct email-verified reporter identities corroborate a checkpoint, both reports have GPS accuracy recorded, mean accuracy is at most 40 m, the route sequence is adjacent, and elapsed time is plausible. Calibrations use a rolling 90-day window, require eight quality-qualified samples, and use a median with median-absolute-deviation outlier rejection. The 80th percentile is retained for uncertainty reporting. Until a segment qualifies, the initial planning offset remains in use.
 
 ## Operational monitoring and research metrics
 `/api/health` is the health probe. `/api/ops/metrics?days=30` returns aggregate daily report-quality and ETA calibration metrics; `/ops` is the visual dashboard. A Vercel Cron job calls `/api/ops/snapshot` once daily at midnight Manila time using `CRON_SECRET` and records the previous completed Manila calendar day, stores historical aggregates, and opens/resolves alerts for slow database queries and stale active trips. No raw phone numbers or per-reporter identities are exposed in the dashboard.
