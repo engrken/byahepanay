@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
   const sql = getDb();
   if (!sql) return adminUnavailable();
   const reporter = await requireReporterIdentity(sql, spotterId);
-  if (!reporter.allowed) return jsonError('Verify your mobile number with SMS OTP before reporting a bus sighting.', 428, 'PHONE_VERIFICATION_REQUIRED');
+  if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before reporting a bus sighting.', 428, 'EMAIL_VERIFICATION_REQUIRED');
 
   let body: SightingPayload;
   try { body = await request.json(); } catch { return jsonError('Invalid JSON request body.'); }

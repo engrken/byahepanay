@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const sql = getDb();
   if (!sql) return adminUnavailable();
   const reporter = await requireReporterIdentity(sql, spotterId);
-  if (!reporter.allowed) return jsonError('Verify your mobile number with SMS OTP before logging a departure.', 428, 'PHONE_VERIFICATION_REQUIRED');
+  if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before logging a departure.', 428, 'EMAIL_VERIFICATION_REQUIRED');
 
   let body: {
     routeId?: string; busType?: string; requestId?: string; bodyNumber?: string;

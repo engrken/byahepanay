@@ -51,7 +51,10 @@ create table if not exists public.trip_rider_sessions (
   primary key (trip_id, spotter_id)
 );
 create table if not exists public.reporter_identities (
-  id uuid primary key default gen_random_uuid(), phone_hash text not null unique, phone_masked text not null,
+  id uuid primary key default gen_random_uuid(),
+  phone_hash text unique, phone_masked text,
+  email_hash text unique, email_masked text,
+  verification_method text not null default 'email' check (verification_method in ('email','sms')),
   verified_at timestamptz not null default now(), created_at timestamptz not null default now()
 );
 create table if not exists public.spotter_reporter_links (
@@ -61,6 +64,15 @@ create table if not exists public.spotter_reporter_links (
 create table if not exists public.phone_verification_events (
   id uuid primary key default gen_random_uuid(), spotter_id uuid not null, phone_hash text not null,
   event_type text not null check (event_type in ('send','check')), provider_status text not null default 'requested', created_at timestamptz not null default now()
+);
+create table if not exists public.email_verification_events (
+  id uuid primary key default gen_random_uuid(), spotter_id uuid not null, email_hash text not null,
+  event_type text not null check (event_type in ('send','check')), provider_status text not null default 'requested', created_at timestamptz not null default now()
+);
+create table if not exists public.email_verification_challenges (
+  id uuid primary key, spotter_id uuid not null, email_hash text not null, email_masked text not null,
+  code_hash text not null, expires_at timestamptz not null, attempts integer not null default 0 check (attempts between 0 and 5),
+  consumed_at timestamptz, created_at timestamptz not null default now()
 );
 create table if not exists public.sightings (
   id uuid primary key default gen_random_uuid(), trip_id uuid not null references public.trips(id) on delete cascade,
@@ -113,6 +125,9 @@ create unique index if not exists sightings_idempotency_key_uidx on public.sight
 create index if not exists sightings_reporter_time_idx on public.sightings(reporter_id,created_at desc);
 create index if not exists phone_verification_events_session_idx on public.phone_verification_events(spotter_id,event_type,created_at desc);
 create index if not exists phone_verification_events_phone_idx on public.phone_verification_events(phone_hash,event_type,created_at desc);
+create index if not exists email_verification_events_session_idx on public.email_verification_events(spotter_id,event_type,created_at desc);
+create index if not exists email_verification_events_email_idx on public.email_verification_events(email_hash,event_type,created_at desc);
+create index if not exists email_verification_challenges_lookup_idx on public.email_verification_challenges(spotter_id,email_hash,created_at desc);
 create index if not exists eta_calibration_samples_segment_idx on public.eta_calibration_samples(route_id,from_checkpoint_id,to_checkpoint_id,bus_type,created_at desc);
 create index if not exists ops_health_snapshots_created_idx on public.ops_health_snapshots(created_at desc);
 create index if not exists report_quality_daily_date_idx on public.report_quality_daily(metric_date desc);
