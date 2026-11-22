@@ -36,3 +36,19 @@ test('email identity and OTP hashes are keyed and deterministic', () => {
 test('generated OTPs are six numeric digits', () => {
   for (let i = 0; i < 100; i++) assert.match(createEmailOtpCode(), /^\d{6}$/);
 });
+
+test('Gmail SMTP setup requires both account email and app password', () => {
+  const savedUser = process.env.GMAIL_USER;
+  const savedPassword = process.env.GMAIL_APP_PASSWORD;
+  delete process.env.GMAIL_USER;
+  delete process.env.GMAIL_APP_PASSWORD;
+  assert.equal(isEmailOtpConfigured(), false);
+  process.env.GMAIL_USER = 'sender@gmail.com';
+  assert.equal(isEmailOtpConfigured(), false);
+  process.env.GMAIL_APP_PASSWORD = 'abcd efgh ijkl mnop';
+  assert.equal(isEmailOtpConfigured(), true);
+  process.env.GMAIL_APP_PASSWORD = '     ';
+  assert.equal(isEmailOtpConfigured(), false);
+  if (savedUser === undefined) delete process.env.GMAIL_USER; else process.env.GMAIL_USER = savedUser;
+  if (savedPassword === undefined) delete process.env.GMAIL_APP_PASSWORD; else process.env.GMAIL_APP_PASSWORD = savedPassword;
+});
