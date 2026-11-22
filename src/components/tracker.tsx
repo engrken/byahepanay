@@ -133,7 +133,7 @@ export default function Tracker() {
       }
     } catch { /* Ignore invalid or unavailable local cache. */ }
     void ensureSpotterSession().catch(() => setMessage({ kind: 'warning', text: 'Secure reporting is unavailable until a session can be initialized.' }));
-    void refreshBoard();
+    const boardFrame = window.requestAnimationFrame(() => { void refreshBoard(); });
     void getQueuedSightingCount().then(setQueuedCount);
     if ('serviceWorker' in navigator) {
       void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
@@ -148,7 +148,10 @@ export default function Tracker() {
       }).catch(() => undefined);
     };
     window.addEventListener('online', online);
-    return () => window.removeEventListener('online', online);
+    return () => {
+      window.cancelAnimationFrame(boardFrame);
+      window.removeEventListener('online', online);
+    };
   }, [refreshBoard]);
 
   useEffect(() => {
