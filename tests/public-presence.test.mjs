@@ -15,7 +15,7 @@ test('public presence endpoint returns aggregate counts using the intended activ
 
 test('public presence endpoint never selects or returns individual identities', () => {
   assert.doesNotMatch(endpoint, /select\s+(?:distinct\s+)?(?:spotter_id|reporter_id)\b/i);
-  assert.doesNotMatch(endpoint, /email_hash|spotter_id\\s*:/i);
+  assert.doesNotMatch(endpoint, /email_hash|spotter_id:\s|reporter_id:\s/i);
   assert.match(endpoint, /active_visitors_now: toCount/);
   assert.match(endpoint, /active_contributors_now: toCount/);
 });
