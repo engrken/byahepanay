@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
         insert into public.sightings (trip_id, checkpoint_id, spotter_id, reporter_id, kind, lat, lng, distance_meters, gps_accuracy_m, implied_speed_kmh, is_verified, confidence_status, rider_status, observed_at, verified_at, idempotency_key)
         select ${trip.id}::uuid, ${checkpoint.id}::uuid, ${spotterId}::uuid, ${reporter.reporterId}::uuid, ${body.kind}, ${body.lat}, ${body.lng}, ${Math.round(distanceMeters * 10) / 10}, ${gpsAccuracyM},
           ${impliedSpeedKmh === null ? null : Math.round(impliedSpeedKmh * 10) / 10}, false, 'unverified', ${body.riderStatus ?? null}, ${observedAtIso}::timestamptz, null, ${requestId}::uuid
-        from locked_trip where (${body.kind !== 'roadside'}::boolean or not exists (select 1 from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'roadside' and created_at > ${rateSince}::timestamptz))
+        from locked_trip where (${body.kind !== 'roadside'}::boolean or not exists (select 1 from public.sightings where kind = 'roadside' and created_at > ${rateSince}::timestamptz and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid))))
         on conflict (idempotency_key) do nothing returning id`,
       sql`update public.sightings set is_verified = true, confidence_status = 'verified', verified_at = ${nowIso}::timestamptz
         where trip_id = ${trip.id}::uuid and checkpoint_id = ${checkpoint.id}::uuid
@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
     const calibrationRows = transactionResults[6] ?? [];
     const outcome = (transactionResults[7] ?? [])[0] as { sighting_id: string; is_verified: boolean; status: string; distinct_spotters: number } | undefined;
     if (!outcome) {
-      const recentTap = body.kind === 'roadside' ? await sql`select id from public.sightings where spotter_id = ${spotterId}::uuid and kind = 'roadside' and created_at > ${rateSince}::timestamptz limit 1` : [];
+      const recentTap = body.kind === 'roadside' ? await sql`select id from public.sightings where kind = 'roadside' and created_at > ${rateSince}::timestamptz and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid)) limit 1` : [];
       if (recentTap.length) return jsonError('One roadside report per secure browser session is allowed every 5 minutes.', 429, 'SPOTTER_RATE_LIMIT');
       return jsonError('The trip changed while this report was being checked. Refresh the board and try again.', 409, 'CONCURRENT_TRIP_UPDATE');
     }

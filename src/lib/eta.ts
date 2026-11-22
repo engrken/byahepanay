@@ -26,9 +26,9 @@ export function estimateTimeline(trip:Trip,checkpoints:Checkpoint[],now=new Date
   const items=ordered.map((checkpoint,index):TimelineItem=>{
     if(index<=lastIndex)return{checkpoint,state:'passed',eta:null,minutesAway:null};
     if(trip.pending_checkpoint_id===checkpoint.id)return{checkpoint,state:'pending',eta:trip.pending_reported_at?new Date(trip.pending_reported_at):null,minutesAway:null};
-    const baseline=departure.getTime()+effectiveOffsetsCache[index]*MINUTE;
+    const baseline=departure.getTime()+offsets[index]*MINUTE;
     const slid=baseline+delayMinutes*MINUTE;
-    const etaMs=Math.max(slid,confirmedAt+(effectiveOffsetsCache[index]-effectiveOffsetsCache[lastIndex])*MINUTE);
+    const etaMs=Math.max(slid,confirmedAt+(offsets[index]-offsets[lastIndex])*MINUTE);
     const eta=new Date(etaMs);
     return{checkpoint,state:index===lastIndex+1?'approaching':'upcoming',eta,minutesAway:Math.max(0,Math.ceil((etaMs-now.getTime())/MINUTE))};
   });

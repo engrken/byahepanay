@@ -70,8 +70,8 @@ export async function POST(request: NextRequest) {
     }
     const recentDeparture = await sql`
       select id from public.sightings
-      where spotter_id = ${spotterId}::uuid and kind = 'departure'
-        and created_at > ${rateSince}::timestamptz limit 1
+      where kind = 'departure' and created_at > ${rateSince}::timestamptz
+        and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid)) limit 1
     `;
     if (recentDeparture.length) {
       return jsonError('Please wait 2 minutes before logging another terminal departure from this browser.', 429, 'DEPARTURE_RATE_LIMIT');
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
 
     const departureAt = new Date().toISOString();
     const transactionResults = await sql.transaction([
-      sql`select pg_advisory_xact_lock(hashtextextended(${spotterId}, 0))`,
+      sql`select pg_advisory_xact_lock(hashtextextended(${reporter.reporterId ?? spotterId}, 0))`,
       sql`
         with eligible as (select 1 where not exists (select 1 from public.sightings where idempotency_key = ${requestId}::uuid)
           and not exists (select 1 from public.sightings where kind = 'departure' and created_at > ${rateSince}::timestamptz and (spotter_id = ${spotterId}::uuid or (${reporter.reporterId}::uuid is not null and reporter_id = ${reporter.reporterId}::uuid)))),
