@@ -29,6 +29,7 @@ create table if not exists public.buses (
 create table if not exists public.trips (
   id uuid primary key default gen_random_uuid(), route_id text not null references public.routes(id),
   bus_id uuid references public.buses(id) on delete set null,
+  start_checkpoint_id uuid references public.checkpoints(id),
   bus_type text not null check (bus_type in ('ordinary', 'aircon')),
   departure_at timestamptz not null default now(),
   status text not null default 'active' check (status in ('active', 'arrived', 'cancelled', 'inactive')),
@@ -178,14 +179,19 @@ insert into public.routes (id, name, short_name, destination, origin_name) value
  ('kalibo_mambusao','Roxas City → Kalibo via Mambusao','Kalibo · Mambusao','Kalibo Terminal','Pueblo de Panay Terminal'),
  ('kalibo_sapian','Roxas City → Kalibo via Sapian','Kalibo · Sapian','Kalibo Terminal','Pueblo de Panay Terminal'),
  ('tapaz','Roxas City → Tapaz / Calinog','Tapaz','Calinog','Pueblo de Panay Terminal'),
- ('estancia','Roxas City → Estancia','Estancia','Estancia Terminal','Pueblo de Panay Terminal')
-on conflict (id) do update set name=excluded.name, short_name=excluded.short_name, destination=excluded.destination;
+ ('estancia','Roxas City → Estancia','Estancia','Estancia Terminal','Pueblo de Panay Terminal'),
+ ('iloilo_passi_return','Iloilo → Roxas City via Passi','Iloilo · Passi → Roxas','Pueblo de Panay Terminal','Tagbak Terminal (Iloilo)'),
+ ('kalibo_mambusao_return','Kalibo → Roxas City via Mambusao','Kalibo · Mambusao → Roxas','Pueblo de Panay Terminal','Kalibo Terminal'),
+ ('kalibo_sapian_return','Kalibo → Roxas City via Sapian','Kalibo · Sapian → Roxas','Pueblo de Panay Terminal','Kalibo Terminal'),
+ ('tapaz_return','Calinog → Roxas City via Tapaz','Tapaz → Roxas','Pueblo de Panay Terminal','Calinog'),
+ ('estancia_return','Estancia → Roxas City','Estancia → Roxas','Pueblo de Panay Terminal','Estancia Terminal')
+on conflict (id) do update set name=excluded.name, short_name=excluded.short_name, destination=excluded.destination, origin_name=excluded.origin_name;
 
 insert into public.checkpoints (code,name,lat,lng) values
  ('pueblo_terminal','Pueblo de Panay Terminal',11.55987,122.74805),
- ('lawaan','Lawaan',11.5662,122.7563), ('bolo','Bolo',11.5517,122.7271),
- ('lanot','Lanot',11.5385,122.7062), ('lonoy','Loñoy',11.5290,122.6962),
- ('ivisan','Ivisan',11.5217,122.6908), ('sigma','Sigma',11.4219,122.6664),
+ ('lawaan','Lawaan',11.551354,122.758464), ('bolo','Bolo',11.543040,122.758362),
+ ('lanot','Lanot',11.522087,122.757176), ('lonoy','Loñoy',11.510291,122.744620),
+ ('ivisan','Ivisan',11.518743,122.697715), ('sigma','Sigma',11.4219,122.6664),
  ('dao','Dao',11.3937,122.6856), ('cuartero','Cuartero',11.3407,122.6694),
  ('dumarao','Dumarao',11.2654,122.6889), ('passi_city','Passi City',11.1078,122.6415),
  ('duenas','Dueñas',11.0675,122.6180), ('pototan','Pototan',10.9440,122.6350),
@@ -231,3 +237,75 @@ join public.checkpoints c on c.code=v.code
 on conflict (route_id,checkpoint_id) do update
 set sequence=excluded.sequence, eta_offset_minutes=excluded.eta_offset_minutes,
     segment_minutes=excluded.segment_minutes, dwell_buffer_minutes=excluded.dwell_buffer_minutes;
+
+-- Reverse every supported corridor, preserving the edge's baseline duration and dwell time.
+WITH route_pairs(outbound_id, inbound_id) AS (
+  VALUES
+    ('iloilo_passi','iloilo_passi_return'),
+    ('kalibo_mambusao','kalibo_mambusao_return'),
+    ('kalibo_sapian','kalibo_sapian_return'),
+    ('tapaz','tapaz_return'),
+    ('estancia','estancia_return')
+),
+reversed AS (
+  SELECT
+    p.inbound_id AS route_id,
+    rc.checkpoint_id,
+    row_number() OVER (PARTITION BY rc.route_id ORDER BY rc.sequence DESC)::integer - 1 AS sequence,
+    lag(rc.segment_minutes) OVER (PARTITION BY rc.route_id ORDER BY rc.sequence DESC) AS segment_minutes,
+    rc.dwell_buffer_minutes,
+    lag(rc.dwell_buffer_minutes) OVER (PARTITION BY rc.route_id ORDER BY rc.sequence DESC) AS previous_dwell
+  FROM route_pairs p
+  JOIN public.route_checkpoints rc ON rc.route_id = p.outbound_id
+),
+offsets AS (
+  SELECT route_id, checkpoint_id, sequence,
+         COALESCE(segment_minutes, 0)::integer AS segment_minutes,
+         dwell_buffer_minutes,
+         sum(CASE WHEN sequence = 0 THEN 0 ELSE COALESCE(segment_minutes, 0) + COALESCE(previous_dwell, 0) END)
+           OVER (PARTITION BY route_id ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::integer AS eta_offset_minutes
+  FROM reversed
+)
+INSERT INTO public.route_checkpoints
+  (route_id, checkpoint_id, sequence, eta_offset_minutes, segment_minutes, dwell_buffer_minutes)
+SELECT route_id, checkpoint_id, sequence, eta_offset_minutes, segment_minutes, dwell_buffer_minutes
+FROM offsets
+ON CONFLICT (route_id, checkpoint_id) DO UPDATE
+SET sequence=excluded.sequence, eta_offset_minutes=excluded.eta_offset_minutes,
+    segment_minutes=excluded.segment_minutes, dwell_buffer_minutes=excluded.dwell_buffer_minutes;
+
+create index if not exists trips_start_checkpoint_idx on public.trips(start_checkpoint_id);
+
+
+-- Pilot readiness: privacy-preserving active-session counts and checkpoint coordinate provenance.
+CREATE TABLE IF NOT EXISTS public.app_presence (
+  spotter_id uuid PRIMARY KEY,
+  reporter_id uuid REFERENCES public.reporter_identities(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS app_presence_last_seen_idx ON public.app_presence(last_seen_at);
+CREATE INDEX IF NOT EXISTS app_presence_reporter_last_seen_idx ON public.app_presence(reporter_id,last_seen_at);
+
+CREATE TABLE IF NOT EXISTS public.checkpoint_location_reviews (
+  checkpoint_id uuid PRIMARY KEY REFERENCES public.checkpoints(id) ON DELETE CASCADE,
+  previous_lat double precision,
+  previous_lng double precision,
+  proposed_lat double precision NOT NULL,
+  proposed_lng double precision NOT NULL,
+  source text NOT NULL,
+  validation_status text NOT NULL DEFAULT 'pending_field_validation'
+    CHECK (validation_status IN ('pending_field_validation','map_reviewed','field_verified')),
+  note text NOT NULL DEFAULT '',
+  submitted_at timestamptz NOT NULL DEFAULT now(),
+  reviewed_at timestamptz,
+  reviewed_by uuid
+);
+
+INSERT INTO public.checkpoint_location_reviews
+  (checkpoint_id,proposed_lat,proposed_lng,source,validation_status,note)
+SELECT id,lat,lng,'project_owner_supplied','pending_field_validation',
+  'Pilot coordinate supplied by the project owner. Exact roadside waiting point and highway side still require on-site confirmation.'
+FROM public.checkpoints
+WHERE code IN ('lawaan','bolo','lanot','lonoy','ivisan')
+ON CONFLICT (checkpoint_id) DO NOTHING;

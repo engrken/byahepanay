@@ -30,6 +30,7 @@ export interface Trip {
   bus_type: BusType;
   departure_at: string;
   status: 'active' | 'arrived' | 'cancelled' | 'inactive';
+  start_checkpoint_id?: string | null;
   last_checkpoint_id: string | null;
   last_checkpoint_at: string | null;
   last_lat: number | null;
@@ -53,7 +54,7 @@ export interface BoardData {
 
 export interface TimelineItem {
   checkpoint: Checkpoint;
-  state: 'passed' | 'pending' | 'approaching' | 'upcoming' | 'stale';
+  state: 'not_started' | 'passed' | 'pending' | 'approaching' | 'upcoming' | 'stale';
   eta: Date | null;
   minutesAway: number | null;
 }

@@ -4,11 +4,11 @@ import type { Checkpoint, RouteDefinition } from './types';
 // Replace with field-verified highway-side coordinates before public launch.
 const P = {
   pueblo: { code: 'pueblo_terminal', name: 'Pueblo de Panay Terminal', lat: 11.55987, lng: 122.74805 },
-  lawaan: { code: 'lawaan', name: 'Lawaan', lat: 11.5662, lng: 122.7563 },
-  bolo: { code: 'bolo', name: 'Bolo', lat: 11.5517, lng: 122.7271 },
-  lanot: { code: 'lanot', name: 'Lanot', lat: 11.5385, lng: 122.7062 },
-  lonoy: { code: 'lonoy', name: 'Loñoy', lat: 11.5290, lng: 122.6962 },
-  ivisan: { code: 'ivisan', name: 'Ivisan', lat: 11.5217, lng: 122.6908 },
+  lawaan: { code: 'lawaan', name: 'Lawaan', lat: 11.551354, lng: 122.758464 },
+  bolo: { code: 'bolo', name: 'Bolo', lat: 11.543040, lng: 122.758362 },
+  lanot: { code: 'lanot', name: 'Lanot', lat: 11.522087, lng: 122.757176 },
+  lonoy: { code: 'lonoy', name: 'Loñoy', lat: 11.510291, lng: 122.744620 },
+  ivisan: { code: 'ivisan', name: 'Ivisan', lat: 11.518743, lng: 122.697715 },
   sigma: { code: 'sigma', name: 'Sigma', lat: 11.4219, lng: 122.6664 },
   dao: { code: 'dao', name: 'Dao', lat: 11.3937, lng: 122.6856 },
   cuartero: { code: 'cuartero', name: 'Cuartero', lat: 11.3407, lng: 122.6694 },
@@ -68,7 +68,7 @@ const trunk: readonly RouteStep[] = [
   ['pueblo', 0], ['lawaan', 4], ['bolo', 7], ['lanot', 11], ['lonoy', 17], ['ivisan', 23],
 ];
 
-export const ROUTES: RouteDefinition[] = [
+const OUTBOUND_ROUTES: RouteDefinition[] = [
   makeRoute('iloilo_passi', 'Roxas City → Iloilo via Passi', 'Iloilo · Passi', 'Tagbak Terminal', [
     ...trunk, ['sigma', 33], ['dao', 43], ['cuartero', 53], ['dumarao', 65], ['passi', 83, 8],
     ['duenas', 98], ['pototan', 110], ['zarraga', 125], ['leganes', 133], ['jaro', 143], ['tagbak', 150],
@@ -88,7 +88,54 @@ export const ROUTES: RouteDefinition[] = [
   ]),
 ];
 
-export function routeForTab(tab: 'iloilo' | 'kalibo' | 'tapaz' | 'estancia', kaliboVia: 'mambusao' | 'sapian' = 'mambusao') {
-  const id = tab === 'iloilo' ? 'iloilo_passi' : tab === 'tapaz' ? 'tapaz' : tab === 'estancia' ? 'estancia' : `kalibo_${kaliboVia}`;
+const RETURN_LABELS: Record<string, { name: string; short_name: string }> = {
+  iloilo_passi: { name: 'Iloilo → Roxas City via Passi', short_name: 'Iloilo · Passi → Roxas' },
+  kalibo_mambusao: { name: 'Kalibo → Roxas City via Mambusao', short_name: 'Kalibo · Mambusao → Roxas' },
+  kalibo_sapian: { name: 'Kalibo → Roxas City via Sapian', short_name: 'Kalibo · Sapian → Roxas' },
+  tapaz: { name: 'Calinog → Roxas City via Tapaz', short_name: 'Tapaz → Roxas' },
+  estancia: { name: 'Estancia → Roxas City', short_name: 'Estancia → Roxas' },
+};
+
+function reverseRoute(route: RouteDefinition): RouteDefinition {
+  const reversed = [...route.checkpoints].reverse();
+  let elapsed = 0;
+  const checkpoints = reversed.map((checkpoint, index) => {
+    const previousOutboundCheckpoint = index === 0 ? null : route.checkpoints[route.checkpoints.length - index];
+    const segment = previousOutboundCheckpoint?.segment_minutes ?? 0;
+    if (previousOutboundCheckpoint) {
+      elapsed += segment + (previousOutboundCheckpoint.dwell_buffer_minutes ?? 0);
+    }
+    return {
+      ...checkpoint,
+      sequence: index,
+      eta_offset_minutes: elapsed,
+      segment_minutes: segment,
+      // Outbound calibration samples must not be reused in the opposite direction.
+      calibrated_segment_minutes: {},
+      calibration_sample_count: {},
+    };
+  });
+  const label = RETURN_LABELS[route.id];
+  return {
+    id: `${route.id}_return`,
+    name: label.name,
+    short_name: label.short_name,
+    destination: 'Pueblo de Panay Terminal',
+    checkpoints,
+  };
+}
+
+export const ROUTES: RouteDefinition[] = [
+  ...OUTBOUND_ROUTES,
+  ...OUTBOUND_ROUTES.map(reverseRoute),
+];
+
+export function routeForTab(
+  tab: 'iloilo' | 'kalibo' | 'tapaz' | 'estancia',
+  kaliboVia: 'mambusao' | 'sapian' = 'mambusao',
+  direction: 'outbound' | 'inbound' = 'outbound',
+) {
+  const baseId = tab === 'iloilo' ? 'iloilo_passi' : tab === 'tapaz' ? 'tapaz' : tab === 'estancia' ? 'estancia' : `kalibo_${kaliboVia}`;
+  const id = direction === 'inbound' ? `${baseId}_return` : baseId;
   return ROUTES.find((route) => route.id === id) ?? ROUTES[0];
 }

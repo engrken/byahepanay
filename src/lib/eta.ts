@@ -53,11 +53,17 @@ export function estimateTimeline(
 
   const offsets = effectiveOffsets(trip, ordered);
   const departure = new Date(trip.departure_at);
-  const lastId = trip.last_checkpoint_id ?? ordered[0].id;
-  const lastIndex = Math.max(0, ordered.findIndex((point) => point.id === lastId));
+  const configuredStartIndex = trip.start_checkpoint_id
+    ? ordered.findIndex((point) => point.id === trip.start_checkpoint_id)
+    : 0;
+  const startIndex = configuredStartIndex >= 0 ? configuredStartIndex : 0;
+  const lastId = trip.last_checkpoint_id ?? trip.start_checkpoint_id ?? ordered[startIndex].id;
+  const foundLastIndex = ordered.findIndex((point) => point.id === lastId);
+  const lastIndex = foundLastIndex >= startIndex ? foundLastIndex : startIndex;
+  const startOffset = offsets[startIndex] ?? 0;
   const nextCheckpoint = ordered[lastIndex + 1] ?? null;
   const expectedNextAt = nextCheckpoint
-    ? departure.getTime() + offsets[lastIndex + 1] * MINUTE
+    ? departure.getTime() + (offsets[lastIndex + 1] - startOffset) * MINUTE
     : now.getTime();
   const delayMinutes = nextCheckpoint
     ? Math.max(0, Math.floor((now.getTime() - expectedNextAt) / MINUTE))
@@ -72,6 +78,7 @@ export function estimateTimeline(
     && delayMinutes >= CONFIRMATION_OVERDUE_GRACE_MINUTES;
 
   const items = ordered.map((checkpoint, index): TimelineItem => {
+    if (index < startIndex) return { checkpoint, state: 'not_started', eta: null, minutesAway: null };
     if (index <= lastIndex) return { checkpoint, state: 'passed', eta: null, minutesAway: null };
     if (trip.pending_checkpoint_id === checkpoint.id) {
       return {
@@ -83,7 +90,7 @@ export function estimateTimeline(
     }
     if (trackingLost) return { checkpoint, state: 'stale', eta: null, minutesAway: null };
 
-    const baseline = departure.getTime() + offsets[index] * MINUTE;
+    const baseline = departure.getTime() + (offsets[index] - startOffset) * MINUTE;
     const slid = baseline + delayMinutes * MINUTE;
     const etaMs = Math.max(slid, confirmedAt + (offsets[index] - offsets[lastIndex]) * MINUTE);
     const eta = new Date(etaMs);

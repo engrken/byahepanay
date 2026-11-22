@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { ROUTES, routeForTab } from '@/lib/corridors';
 import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
 import { nearestCheckpoint, formatDistance } from '@/lib/geo';
+import { MAX_NEAREST_STOP_DISTANCE_METERS } from '@/lib/presence';
+import OnboardingGuide from '@/components/onboarding-guide';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
 import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
@@ -19,10 +21,13 @@ function createRequestId() {
   if (!globalThis.crypto?.randomUUID) throw new Error('This browser cannot create secure report identifiers.');
   return globalThis.crypto.randomUUID();
 }
-function routeMatchesTab(routeId: string, tab: CorridorTab) {
-  if (tab === 'kalibo') return routeId === 'kalibo_mambusao' || routeId === 'kalibo_sapian';
-  if (tab === 'iloilo') return routeId === 'iloilo_passi';
-  return routeId === tab;
+function routeMatchesTab(routeId: string, tab: CorridorTab, direction: 'outbound' | 'inbound') {
+  const isInbound = routeId.endsWith('_return');
+  if (isInbound !== (direction === 'inbound')) return false;
+  const baseId = routeId.replace(/_return$/, '');
+  if (tab === 'kalibo') return baseId === 'kalibo_mambusao' || baseId === 'kalibo_sapian';
+  if (tab === 'iloilo') return baseId === 'iloilo_passi';
+  return baseId === tab;
 }
 
 function ConfidenceBadge({ value }: { value: 'scheduled' | 'unverified' | 'verified' }) {
@@ -48,6 +53,8 @@ export default function Tracker() {
   const [clock, setClock] = useState(() => new Date());
   const [tab, setTab] = useState<CorridorTab>('iloilo');
   const [kaliboVia, setKaliboVia] = useState<'mambusao' | 'sapian'>('mambusao');
+  const [direction, setDirection] = useState<'outbound' | 'inbound'>('outbound');
+  const [startCheckpointId, setStartCheckpointId] = useState('');
   const [waitStopId, setWaitStopId] = useState<string | null>(null);
   const [message, setMessage] = useState<UiMessage>(null);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -182,19 +189,23 @@ export default function Tracker() {
     };
   }, [refreshBoard]);
 
-  const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia), [tab, kaliboVia]);
+  const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia, direction), [tab, kaliboVia, direction]);
+  const startableCheckpoints = selectedRoute.checkpoints.slice(0, -1);
+  const departureStartCheckpointId = startableCheckpoints.some((point) => point.id === startCheckpointId)
+    ? startCheckpointId
+    : startableCheckpoints[0]?.id ?? '';
   const selectedBoardRoute = useMemo(
     () => board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute,
     [board.routes, selectedRoute],
   );
   const relatedTrips = useMemo(() => board.trips
-    .filter((trip) => (routeMatchesTab(trip.route_id, tab) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
-    .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab]);
+    .filter((trip) => (routeMatchesTab(trip.route_id, tab, direction) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab, direction) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
+    .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab, direction]);
 
   // Use the rider's browser location to find the nearest mapped stop on the selected corridor.
   // The coordinates stay on this device unless the rider separately submits a bus sighting.
   const nearestUserStop = useMemo(
-    () => riderLocation ? nearestCheckpoint(riderLocation, selectedBoardRoute.checkpoints) : null,
+    () => riderLocation ? nearestCheckpoint(riderLocation, selectedBoardRoute.checkpoints, Math.max(MAX_NEAREST_STOP_DISTANCE_METERS, riderLocation.accuracy * 3)) : null,
     [riderLocation, selectedBoardRoute],
   );
   const targetStop = useMemo(() => {
@@ -216,7 +227,7 @@ export default function Tracker() {
       if (!route) return null;
       const tripTimeline = estimateTimeline(trip, route.checkpoints, clock);
       const stopItem = tripTimeline.items.find((item) => item.checkpoint.id === targetStop.id);
-      if (!stopItem || stopItem.state === 'passed' || stopItem.state === 'pending' || !stopItem.eta || stopItem.minutesAway === null) {
+      if (!stopItem || stopItem.state === 'not_started' || stopItem.state === 'passed' || stopItem.state === 'pending' || !stopItem.eta || stopItem.minutesAway === null) {
         return null;
       }
       return { trip, route, eta: stopItem.eta, minutesAway: stopItem.minutesAway };
@@ -282,45 +293,55 @@ export default function Tracker() {
             ? 'Location lookup timed out. Try again outdoors or select your stop manually.'
             : 'Could not read your location. Choose your stop manually.',
       );
-    }, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000 });
+    }, { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 });
   };
 
   const recordDeparture = async () => {
+    const startCheckpoint = selectedRoute.checkpoints.find((point) => point.id === departureStartCheckpointId);
+    if (!startCheckpoint) {
+      setMessage({ kind: 'error', text: 'Choose the checkpoint where you first saw the bus.' });
+      return;
+    }
     if (!navigator.geolocation) {
-      setMessage({ kind: 'error', text: 'GPS is required to verify a Pueblo departure.' });
+      setMessage({ kind: 'error', text: 'GPS is required to verify a trip start at this checkpoint.' });
       return;
     }
     setBusy(true);
     try {
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 });
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 });
       });
       await ensureSpotterSession();
       const response = await fetch('/api/departures', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: createRequestId(), routeId: selectedRoute.id, busType: departureType,  bodyNumber: departureBody.trim() || undefined, plateNumber: departurePlate.trim() || undefined, lat: position.coords.latitude, lng: position.coords.longitude }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({
+          requestId: createRequestId(), routeId: selectedRoute.id, checkpointId: startCheckpoint.id,
+          busType: departureType, bodyNumber: departureBody.trim() || undefined,
+          plateNumber: departurePlate.trim() || undefined,
+          lat: position.coords.latitude, lng: position.coords.longitude,
+        }),
       });
       const result = await response.json().catch(() => ({})) as { error?: string; trip?: Trip };
-      if (!response.ok) throw new Error(result.error ?? 'Could not log departure.');
+      if (!response.ok) throw new Error(result.error ?? 'Could not start trip.');
       setDepartureOpen(false);
-      setTab(selectedRoute.id === 'iloilo_passi' ? 'iloilo' : selectedRoute.id === 'tapaz' ? 'tapaz' : selectedRoute.id === 'estancia' ? 'estancia' : 'kalibo');
-      if (selectedRoute.id === 'kalibo_sapian') setKaliboVia('sapian');
-      if (selectedRoute.id === 'kalibo_mambusao') setKaliboVia('mambusao');
-      setMessage({ kind: 'success', text: `${departureType === 'aircon' ? 'Aircon' : 'Ordinary'} departure logged from Pueblo de Panay.` });
+      setWaitStopId(startCheckpoint.id);
+      setMessage({ kind: 'success', text: `${departureType === 'aircon' ? 'Aircon' : 'Ordinary'} trip started at ${startCheckpoint.name} on ${selectedRoute.name}.` });
       setDepartureBody(''); setDeparturePlate('');
       await refreshBoard();
     } catch (error) {
       const geoCode = typeof error === 'object' && error !== null && 'code' in error ? Number(error.code) : 0;
       const messageText = geoCode
-        ? geoCode === 1 ? 'Allow location access to log a terminal departure.' : 'Could not get a GPS fix at Pueblo Terminal.'
-        : error instanceof Error ? error.message : 'Departure could not be recorded.';
+        ? geoCode === 1 ? 'Allow location access to verify the selected checkpoint.' : `Could not get a GPS fix near ${startCheckpoint.name}.`
+        : error instanceof Error ? error.message : 'Trip could not be started.';
       setMessage({ kind: 'error', text: messageText });
     } finally { setBusy(false); }
   };
 
   const reportRoadside = () => {
     if (!activeTrip || activeTrip.status !== 'active') {
-      setMessage({ kind: 'info', text: activeTrip?.status === 'arrived' ? 'This trip has already reached its terminal.' : 'There is no active trip on this corridor yet. Log a departure first.' });
+      setStartCheckpointId(targetStop?.id ?? selectedRoute.checkpoints[0]?.id ?? '');
+      setDepartureOpen(true);
+      setMessage({ kind: 'info', text: 'No active bus is listed yet. You can be the first contributor: choose where you saw the bus and start its trip.' });
       return;
     }
     if (!navigator.geolocation) {
@@ -509,8 +530,24 @@ export default function Tracker() {
     setMessage(null);
   };
 
-  const waitingGuidance = waitItem?.state === 'stale'
-    ? 'Tracking is no longer fresh. Wait for a new verified checkpoint report.'
+  const selectTripRoute = (routeId: string) => {
+    const route = ROUTES.find((candidate) => candidate.id === routeId);
+    if (!route) return;
+    const inbound = route.id.endsWith('_return');
+    const baseId = route.id.replace(/_return$/, '');
+    setDirection(inbound ? 'inbound' : 'outbound');
+    setStartCheckpointId(route.checkpoints[0]?.id ?? '');
+    if (baseId === 'iloilo_passi') setTab('iloilo');
+    else if (baseId === 'tapaz') setTab('tapaz');
+    else if (baseId === 'estancia') setTab('estancia');
+    else { setTab('kalibo'); setKaliboVia(baseId === 'kalibo_sapian' ? 'sapian' : 'mambusao'); }
+    setWaitStopId(null);
+  };
+
+  const waitingGuidance = waitItem?.state === 'not_started'
+    ? 'This bus has not reached this stop yet; it begins farther along the route.'
+    : waitItem?.state === 'stale'
+      ? 'Tracking is no longer fresh. Wait for a new verified checkpoint report.'
     : waitItem?.state === 'passed'
       ? 'This trip has already passed your selected stop.'
       : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway <= 12
@@ -520,7 +557,7 @@ export default function Tracker() {
           : 'Get ready and keep your phone nearby.';
 
   return (
-    <main className="app-shell">
+    <main className="app-shell"><OnboardingGuide />
       <a className="skip-link" href="#main-content">Skip to tracker</a>
       <header className="topbar">
         <div className="topbar-inner">
@@ -544,7 +581,7 @@ export default function Tracker() {
           <h1 className="header-title">Catch the last trip.<br />Not the guesswork.</h1>
           <p className="header-subtitle">Community-verified bus sightings across Capiz, Iloilo, and Aklan.</p>
           <div className="header-meta">
-            <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
+            <div className="origin-pill">📍 Starts at {selectedRoute.checkpoints[0]?.name ?? 'selected checkpoint'}</div>
             <div className={`connection-pill ${isOnline ? 'connected' : 'disconnected'}`} role="status" aria-live="polite">
               <span className="connection-dot" aria-hidden="true" />
               {isOnline ? 'Connection available' : 'Offline · reports saved on this device'}
@@ -557,6 +594,7 @@ export default function Tracker() {
             <a href="#active-trip">Current trip</a>
             <a href="#checkpoint-timeline">Checkpoints</a>
             <a href="#contribution">Contribute</a>
+            <a href="/help">Help / User guide</a>
             {otpStatus.isDeveloperAdmin && <a className="site-menu-admin" href="/ops">Operations &amp; analytics</a>}
           </nav>
         </div>
@@ -575,16 +613,23 @@ export default function Tracker() {
           </>}
         </section>
         <section className="corridor-wrap" id="corridors" aria-label="Choose travel corridor">
+          <div className="variant-switch" aria-label="Travel direction">
+            <button className={`variant-button ${direction === 'outbound' ? 'active' : ''}`} aria-pressed={direction === 'outbound'} onClick={() => { setDirection('outbound'); setWaitStopId(null); setMessage(null); }}>From Roxas City</button>
+            <button className={`variant-button ${direction === 'inbound' ? 'active' : ''}`} aria-pressed={direction === 'inbound'} onClick={() => { setDirection('inbound'); setWaitStopId(null); setMessage(null); }}>To Roxas City</button>
+          </div>
           <div className="corridor-tabs">
             <button className={`corridor-tab ${tab === 'iloilo' ? 'active' : ''}`} onClick={() => selectedTab('iloilo')}>Iloilo<br />(Passi)</button>
             <button className={`corridor-tab ${tab === 'kalibo' ? 'active' : ''}`} onClick={() => selectedTab('kalibo')}>Kalibo</button>
             <button className={`corridor-tab ${tab === 'tapaz' ? 'active' : ''}`} onClick={() => selectedTab('tapaz')}>Tapaz</button>
             <button className={`corridor-tab ${tab === 'estancia' ? 'active' : ''}`} onClick={() => selectedTab('estancia')}>Estancia</button>
           </div>
-          {tab === 'kalibo' && <div className="variant-switch" aria-label="Kalibo corridor branch">
-            <button className={`variant-button ${kaliboVia === 'mambusao' ? 'active' : ''}`} onClick={() => { setKaliboVia('mambusao'); setWaitStopId(null); }}>Via Mambusao</button>
-            <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
-          </div>}
+          {tab === 'kalibo' && <>
+            <div className="variant-switch" aria-label="Kalibo corridor branch">
+              <button className={`variant-button ${kaliboVia === 'mambusao' ? 'active' : ''}`} onClick={() => { setKaliboVia('mambusao'); setWaitStopId(null); }}>Via Mambusao</button>
+              <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
+            </div>
+            <p className="verification-footnote">Current coverage ends at Kalibo Terminal. Caticlan is not yet mapped in this pilot, so no Caticlan ETA is shown.</p>
+          </>}
         </section>
 
         <section className="card arrival-card" id="arrivals" aria-label="Next buses near your stop">
@@ -609,10 +654,12 @@ export default function Tracker() {
               {selectedBoardRoute.checkpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
             </select>
           </div>
-          <div className="arrival-location-meta">
+          <div className="arrival-location-meta" aria-live="polite">
             {riderLocation && nearestUserStop
-              ? <>Nearest mapped stop: <strong>{nearestUserStop.checkpoint.name}</strong> · approx. {formatDistance(nearestUserStop.distanceMeters)} away · GPS accuracy ±{formatDistance(riderLocation.accuracy)}</>
-              : 'Use your location or select a stop manually. Your location stays on this device.'}
+              ? <>Nearest mapped stop: <strong>{nearestUserStop.checkpoint.name}</strong> · approx. {formatDistance(nearestUserStop.distanceMeters)} away · GPS accuracy ±{formatDistance(riderLocation.accuracy)}{riderLocation.accuracy > 50 ? ' · GPS signal is imprecise; try again outdoors.' : ''}</>
+              : riderLocation
+                ? <>No mapped stop is within {formatDistance(Math.max(MAX_NEAREST_STOP_DISTANCE_METERS, riderLocation.accuracy * 3))} of this GPS fix. Please choose your waiting stop manually. GPS accuracy ±{formatDistance(riderLocation.accuracy)}.</>
+                : 'Use your location or select your stop manually. Your location stays on this device.'}
           </div>
           {locationError && <div className="notice error">{locationError}</div>}
           {targetStop ? <div className="arrival-results">
@@ -658,8 +705,9 @@ export default function Tracker() {
             </div>
             <div className="trip-stats">
               <div><div className="stat-label">Bus / Plate</div><div className="stat-value">{activeTrip.body_number || 'Not tagged'}{activeTrip.plate_number ? ` · ${activeTrip.plate_number}` : ''}</div></div>
-              <div><div className="stat-label">Left Pueblo</div><div className="stat-value">{formatTime(activeTrip.departure_at)}</div></div>
-              <div><div className="stat-label">Last confirmed</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}</div></div>
+              <div><div className="stat-label">Started at</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.start_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'Unknown checkpoint'}</div></div>
+            <div><div className="stat-label">Start time</div><div className="stat-value">{formatTime(activeTrip.departure_at)}</div></div>
+              <div><div className="stat-label">Last confirmed</div><div className="stat-value">{activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'Unknown checkpoint'}</div></div>
               <div><div className="stat-label">Checkpoint time</div><div className="stat-value">{formatTime(activeTrip.last_checkpoint_at)}</div></div>
             </div>
             <div className="destination-window">
@@ -675,7 +723,7 @@ export default function Tracker() {
             </div>
 {timeline?.trackingLost && activeTrip.status === 'active' && <div className="notice tracking-lost" role="status">
               <strong>Tracking lost · ETA paused.</strong> No verified checkpoint confirmation for {timeline.minutesSinceCheckpoint} minutes.
-              Last confirmed at {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}.
+              Last confirmed at {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? activeRoute.checkpoints[0]?.name ?? 'the route start'}.
               This does not mean the bus arrived or was cancelled.
             </div>}
             {timeline?.confirmationOverdue && !timeline.trackingLost && timeline.nextCheckpoint && <div className="notice tracking-overdue" role="status">
@@ -692,23 +740,27 @@ export default function Tracker() {
             </details>}
           </> : <div className="empty-trip">
             <strong>{loading ? 'Checking the live board…' : 'No active trip confirmed on this corridor'}</strong>
-            <p>Log a departure when a bus actually leaves Pueblo, or check back for a community-verified sighting.</p>
+            <p>No trip has been started on this route yet. When you see a bus, choose its route and your checkpoint—no terminal departure is required.</p>
           </div>}
         </section>
 
         <div className="section-label">Checkpoint timeline</div>
         <section className="card timeline-card" id="checkpoint-timeline">
           {(timeline?.items ?? activeRoute.checkpoints.map((checkpoint) => ({ checkpoint, state: 'upcoming' as const, eta: null, minutesAway: null }))).map((item) => {
-            const stateText = item.state === 'passed'
-              ? 'Passed'
-              : item.state === 'pending'
+            const stateText = item.state === 'not_started'
+              ? 'Before this trip started'
+              : item.state === 'passed'
+                ? 'Passed'
+                : item.state === 'pending'
                 ? '1 report · awaiting confirmation'
                 : item.state === 'stale'
                   ? 'No fresh confirmation · ETA paused'
                   : item.state === 'approaching' ? 'Approaching' : 'Upcoming';
-            const dotText = item.state === 'passed'
-              ? '✓'
-              : item.state === 'pending' ? '!'
+            const dotText = item.state === 'not_started'
+              ? '·'
+              : item.state === 'passed'
+                ? '✓'
+                : item.state === 'pending' ? '!'
                 : item.state === 'stale' ? '—'
                   : item.state === 'approaching' ? '🚌' : '·';
             return <div className="timeline-row" key={item.checkpoint.id}>
@@ -734,24 +786,24 @@ export default function Tracker() {
           <div className="wait-guidance">{activeRoute.checkpoints.find((point) => point.id === waitStopId)?.name} · {waitingGuidance}</div>
         </section>}
 
-        <div className="section-label">Next 30-minute dispatch slots</div>
+        <div className="section-label">Projected follow-up intervals · unconfirmed</div>
         {activeTrip ? <div className="cadence-list">
           {cadence.map((slot) => <div className="cadence-item" key={slot.departureAt.toISOString()}>
             <div className="cadence-time">{formatTime(slot.departureAt)}</div>
             <div className="cadence-type">{slot.busType === 'aircon' ? 'Aircon · Deluxe' : 'Regular · Ordinary'}</div>
-            <div className="cadence-state">⚪ Scheduled · Unconfirmed</div>
+            <div className="cadence-state">⚪ Projection · Unconfirmed</div>
           </div>)}
-        </div> : <div className="card empty-trip"><p>Projected slots appear after an actual departure is logged as the cadence anchor. These are projections, not confirmed operator dispatches.</p></div>}
+        </div> : <div className="card empty-trip"><p>Follow-up intervals are projections from the first checkpoint observation, not official operator dispatch times.</p></div>}
 
         <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
 
       <nav className="bottom-bar" id="contribution" aria-label="Quick reporting actions">
         <div className="bottom-actions">
-          <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Log a bus departure from Pueblo">
+          <button className="action-button" onClick={() => { setStartCheckpointId(targetStop?.id ?? selectedRoute.checkpoints[0]?.id ?? ''); setDepartureOpen(true); }} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Start tracking a bus from any mapped checkpoint">
             <span className="action-icon" aria-hidden="true">🏁</span>
-            <span className="action-label">Departure</span>
-            <span className="action-copy">Left Pueblo</span>
+            <span className="action-label">Start trip</span>
+            <span className="action-copy">Any checkpoint</span>
           </button>
           <button className="action-button main" onClick={reportRoadside} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Report a bus that just passed this checkpoint">
             <span className="action-icon" aria-hidden="true">👀</span>
@@ -768,24 +820,25 @@ export default function Tracker() {
 
       {departureOpen && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDepartureOpen(false); }}>
         <section className="modal" role="dialog" aria-modal="true" aria-labelledby="departure-title">
-          <h2 id="departure-title">Log a Pueblo departure</h2>
-          <p>Only log a departure after the bus actually leaves the terminal. This becomes the 30-minute cadence anchor for projected slots.</p>
-          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-route">Corridor</label><select id="departure-route" value={selectedRoute.id} onChange={(event) => {
-            const route = ROUTES.find((candidate) => candidate.id === event.target.value);
-            if (!route) return;
-            if (route.id === 'iloilo_passi') setTab('iloilo');
-            else if (route.id === 'tapaz') setTab('tapaz');
-            else if (route.id === 'estancia') setTab('estancia');
-            else { setTab('kalibo'); setKaliboVia(route.id === 'kalibo_sapian' ? 'sapian' : 'mambusao'); }
-          }}>
-            <option value="iloilo_passi">Iloilo via Passi</option><option value="kalibo_mambusao">Kalibo via Mambusao</option><option value="kalibo_sapian">Kalibo via Sapian</option><option value="tapaz">Tapaz / Calinog</option><option value="estancia">Estancia</option>
+          <h2 id="departure-title">Start tracking a bus</h2>
+          <p>Be the first contributor when you see a bus. A trip can start at Pueblo, Lanot, Passi, Kalibo, Iloilo, or any other mapped checkpoint on the selected route.</p>
+          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-route">Route and direction</label><select id="departure-route" value={selectedRoute.id} onChange={(event) => selectTripRoute(event.target.value)}>
+            <optgroup label="From Roxas City">
+              <option value="iloilo_passi">Roxas → Iloilo via Passi</option><option value="kalibo_mambusao">Roxas → Kalibo via Mambusao</option><option value="kalibo_sapian">Roxas → Kalibo via Sapian</option><option value="tapaz">Roxas → Tapaz / Calinog</option><option value="estancia">Roxas → Estancia</option>
+            </optgroup>
+            <optgroup label="To Roxas City">
+              <option value="iloilo_passi_return">Iloilo → Roxas via Passi</option><option value="kalibo_mambusao_return">Kalibo → Roxas via Mambusao</option><option value="kalibo_sapian_return">Kalibo → Roxas via Sapian</option><option value="tapaz_return">Calinog → Roxas via Tapaz</option><option value="estancia_return">Estancia → Roxas</option>
+            </optgroup>
           </select></div>
+          <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-checkpoint">Where did you first see this bus?</label><select id="departure-checkpoint" value={departureStartCheckpointId} onChange={(event) => setStartCheckpointId(event.target.value)} required>
+            {startableCheckpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
+          </select><p className="verification-footnote">Choose the mapped roadside stop where you are watching. GPS must be within 300 m to verify the start.</p></div>
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-type">Bus type</label><select id="departure-type" value={departureType} onChange={(event) => setDepartureType(event.target.value as BusType)}><option value="aircon">Aircon · Deluxe</option><option value="ordinary">Regular · Ordinary</option></select></div>
           <div className="form-grid">
             <div className="field"><label htmlFor="departure-body">Body number · optional</label><input id="departure-body" value={departureBody} onChange={(event) => setDepartureBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} /></div>
             <div className="field"><label htmlFor="departure-plate">Plate · optional</label><input id="departure-plate" value={departurePlate} onChange={(event) => setDeparturePlate(event.target.value)} placeholder="Plate number" maxLength={16} /></div>
           </div>
-          <div className="modal-actions"><button className="secondary-button" onClick={() => setDepartureOpen(false)} type="button">Cancel</button><button className="primary-button" onClick={recordDeparture} disabled={busy}>{busy ? 'Saving…' : 'Confirm actual departure'}</button></div>
+          <div className="modal-actions"><button className="secondary-button" onClick={() => setDepartureOpen(false)} type="button">Cancel</button><button className="primary-button" onClick={recordDeparture} disabled={busy || !departureStartCheckpointId}>{busy ? 'Starting…' : 'Start trip here'}</button></div>
         </section>
       </div>}
 
