@@ -76,7 +76,7 @@ export async function GET() {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    console.error('ByahePanay board query failed', error);
+    console.error('BiyahePanay board query failed', error);
     return NextResponse.json({ error: 'Unable to load the live board.' }, { status: 502 });
   }
 }

@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     if (!bus) return jsonError('No registry match. You can still tag the trip with this body number.', 404);
     return NextResponse.json({ bus });
   } catch (error) {
-    console.error('ByahePanay bus lookup failed', error);
+    console.error('BiyahePanay bus lookup failed', error);
     return jsonError('Bus registry lookup failed.', 502);
   }
 }

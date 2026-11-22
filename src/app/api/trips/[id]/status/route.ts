@@ -36,7 +36,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (!updated.length) return jsonError('Active trip not found.', 404);
     return NextResponse.json({ ok: true, status: body.status });
   } catch (error) {
-    console.error('ByahePanay rider status update failed', error);
+    console.error('BiyahePanay rider status update failed', error);
     return jsonError('Rider status update failed.', 500);
   }
 }

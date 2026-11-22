@@ -523,7 +523,7 @@ export default function Tracker() {
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brandline">
-            <div className="brand"><span className="brand-mark">🚌</span><span>ByahePanay</span></div>
+            <div className="brand"><span className="brand-mark">🚌</span><span>BiyahePanay</span></div>
             <div className="header-tools">
               <div className="eyebrow">Community trip tracker</div>
               <button
@@ -758,7 +758,7 @@ export default function Tracker() {
 
       {riderMode && activeTrip && <section className="beacon-screen" aria-label="Rider Beacon mode">
         <div>
-          <div className="eyebrow">ByahePanay · Rider Beacon</div>
+          <div className="eyebrow">BiyahePanay · Rider Beacon</div>
           <h2>{activeRoute.destination} trip beacon active</h2>
           <div className="beacon-orb">🚌</div>
           <div className="beacon-meta">GPS checks every 30 seconds<br />{wakeLockActive ? 'Screen wake lock active' : 'Screen may dim on this device'}<br />Last checkpoint: {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}<br />Last beacon: {lastBeaconAt ? formatTime(lastBeaconAt) : 'Waiting for GPS fix'}</div>

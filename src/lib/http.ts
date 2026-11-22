@@ -5,7 +5,7 @@ export function jsonError(message: string, status = 400, code?: string) {
 }
 
 export function adminUnavailable() {
-  return jsonError('Neon database is not configured. Attach the ByahePanay Neon integration or set DATABASE_URL.', 503, 'DATABASE_NOT_CONFIGURED');
+  return jsonError('Neon database is not configured. Set BIYAHEPANAY_DATABASE_URL or DATABASE_URL (the existing BYAHEPANAY_DATABASE_URL integration variable is also supported).', 503, 'DATABASE_NOT_CONFIGURED');
 }
 
 export function isSameOriginRequest(request: Request): boolean {

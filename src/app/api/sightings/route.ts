@@ -264,7 +264,7 @@ export async function POST(request: NextRequest) {
     }, { status: insertedRows.length ? 201 : 200 });
 
   } catch (error) {
-    console.error('ByahePanay sighting validation failed', error);
+    console.error('BiyahePanay sighting validation failed', error);
     return jsonError('Could not validate this sighting. Please retry.', 500);
   }
 }

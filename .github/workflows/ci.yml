@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: byahepanay-ci-${{ github.ref }}
+  group: biyahepanay-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verify:

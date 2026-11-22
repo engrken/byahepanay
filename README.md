@@ -1,4 +1,4 @@
-# ByahePanay — Ceres Liner Last-Trip Tracker
+# BiyahePanay — Ceres Liner Last-Trip Tracker
 
 Mobile-first Next.js PWA for community checkpoint reports and estimated Ceres Liner arrivals across Capiz, Iloilo, and Aklan. It is not an official Ceres Liner schedule or operator service.
 
@@ -12,7 +12,7 @@ Mobile-first Next.js PWA for community checkpoint reports and estimated Ceres Li
 
 ## Database setup
 
-The existing Vercel project `byahepanay` is connected to the Neon Marketplace database `byahepanay` in Singapore. The integration injects `BYAHEPANAY_DATABASE_URL` for Production and Preview.
+The Vercel project is named `biyahepanay` and remains connected to the existing Neon Marketplace database `byahepanay` in Singapore. The current Neon integration injects `BYAHEPANAY_DATABASE_URL`; the app now prefers `BIYAHEPANAY_DATABASE_URL` when present and falls back to the existing integration variable, so the database connection remains compatible during the rename.
 
 For a fresh database, run the complete `neon/schema.sql` file on the Neon SQL Editor. It creates the route, checkpoint, bus, trip, rider-session, and sighting tables, plus the five route variants and their initial checkpoint/ETA seed data.
 
@@ -28,7 +28,7 @@ SPOTTER_SESSION_SECRET=replace-with-a-random-secret-of-at-least-32-characters
 BYPASS_GEOFENCE=true
 ```
 
-On Vercel, the Marketplace integration provides `BYAHEPANAY_DATABASE_URL`, which the server uses automatically. Do not commit real database credentials.
+On Vercel, the server checks `BIYAHEPANAY_DATABASE_URL`, then the existing integration variable `BYAHEPANAY_DATABASE_URL`, then `DATABASE_URL`. Keep the current Neon Marketplace variable in place unless you separately verify a replacement. Do not commit real database credentials.
 
 ## Run locally
 
@@ -52,9 +52,9 @@ npm run start
 
 ## GitHub and Vercel
 
-Repository: https://github.com/engrken/byahepanay  
+Repository: https://github.com/engrken/biyahepanay  
 Production branch: `main`  
-Vercel project: `byahepanay` (team `kentbsece-7567`)
+Vercel project: `biyahepanay` (team `kentbsece-7567`)
 
 Pushes to `main` trigger a Vercel production deployment. Vercel injects the Neon integration variables for Production and Preview.
 
@@ -111,3 +111,7 @@ Each checkpoint segment is calibrated separately by route and bus type. A sample
 `/api/health` is the health probe. `/api/ops/metrics?days=30` returns aggregate daily report-quality and ETA calibration metrics; `/ops` is the visual dashboard. A Vercel Cron job calls `/api/ops/snapshot` once daily at midnight Manila time using `CRON_SECRET` and records the previous completed Manila calendar day, stores historical aggregates, and opens/resolves alerts for slow database queries and stale active trips. No raw email addresses, phone numbers, or per-reporter identities are exposed in the dashboard.
 
 Calibration values are research estimates, not official schedules. Field-validate checkpoint coordinates and timestamps with Vallacar/Ceres permission before operational reliance.
+
+
+### Rebrand compatibility
+The app display name is now **BiyahePanay**. Existing IndexedDB, local-storage, service-worker sync, and session-cookie identifiers are intentionally retained so installed devices keep their queued sightings, preferences, and active sessions across the spelling change. The service-worker shell cache is versioned separately to refresh the renamed app shell.
