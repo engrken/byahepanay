@@ -66,7 +66,7 @@ export function estimateTimeline(
     ? new Date(trip.last_checkpoint_at).getTime()
     : departure.getTime();
   const minutesSinceCheckpoint = Math.max(0, Math.floor((now.getTime() - confirmedAt) / MINUTE));
-  const trackingLost = Boolean(nextCheckpoint) && minutesSinceCheckpoint >= TRACKING_LOST_AFTER_MINUTES;
+  const trackingLost = trip.status === 'active' && minutesSinceCheckpoint >= TRACKING_LOST_AFTER_MINUTES;
   const confirmationOverdue = Boolean(nextCheckpoint)
     && !trackingLost
     && delayMinutes >= CONFIRMATION_OVERDUE_GRACE_MINUTES;
