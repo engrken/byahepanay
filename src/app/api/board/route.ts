@@ -26,7 +26,7 @@ export async function GET() {
       sql`select route_id, checkpoint_id, sequence, eta_offset_minutes, segment_minutes, dwell_buffer_minutes
           from public.route_checkpoints order by route_id, sequence`,
       sql`select t.id, t.route_id, t.bus_type, t.departure_at, t.status,
-                 t.last_checkpoint_id, t.last_checkpoint_at, t.last_lat, t.last_lng,
+                 t.start_checkpoint_id, t.last_checkpoint_id, t.last_checkpoint_at, t.last_lat, t.last_lng,
                  t.confidence_status, t.pending_checkpoint_id, t.pending_reported_at,
                  t.route_locked, t.route_candidate, t.rider_status,
                  b.body_number, b.plate_number
