@@ -7,6 +7,7 @@ import { nearestCheckpoint, formatDistance } from '@/lib/geo';
 import { MAX_NEAREST_STOP_DISTANCE_METERS } from '@/lib/presence';
 import OnboardingGuide from '@/components/onboarding-guide';
 import CommunityPresence from '@/components/community-presence';
+import { getStartableCheckpoints, isPersistedCheckpointId, resolveDepartureCheckpoint } from '@/lib/departure-checkpoint';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
 import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
@@ -51,6 +52,7 @@ export default function Tracker() {
   const [themeReady, setThemeReady] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [refreshingBoard, setRefreshingBoard] = useState(false);
   const [clock, setClock] = useState(() => new Date());
   const [tab, setTab] = useState<CorridorTab>('iloilo');
   const [kaliboVia, setKaliboVia] = useState<'mambusao' | 'sapian'>('mambusao');
@@ -94,8 +96,10 @@ export default function Tracker() {
       const data = await response.json() as BoardData;
       setBoard(data);
       try { window.localStorage.setItem('byahepanay-board-cache', JSON.stringify(data)); } catch { /* Storage may be disabled or full. */ }
+      return true;
     } catch {
       setBoard((current) => current.routes.length ? current : EMPTY_BOARD);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -191,14 +195,21 @@ export default function Tracker() {
   }, [refreshBoard]);
 
   const selectedRoute = useMemo(() => routeForTab(tab, kaliboVia, direction), [tab, kaliboVia, direction]);
-  const startableCheckpoints = selectedRoute.checkpoints.slice(0, -1);
-  const departureStartCheckpointId = startableCheckpoints.some((point) => point.id === startCheckpointId)
-    ? startCheckpointId
-    : startableCheckpoints[0]?.id ?? '';
-  const selectedBoardRoute = useMemo(
-    () => board.routes.find((route) => route.id === selectedRoute.id) ?? selectedRoute,
-    [board.routes, selectedRoute],
+  const persistedSelectedRoute = useMemo(
+    () => board.routes.find((route) => route.id === selectedRoute.id) ?? null,
+    [board.routes, selectedRoute.id],
   );
+  const selectedBoardRoute = persistedSelectedRoute ?? selectedRoute;
+  // Only database-backed checkpoint UUIDs can be sent to the departure API.
+  const startableCheckpoints = useMemo(
+    () => getStartableCheckpoints(persistedSelectedRoute),
+    [persistedSelectedRoute],
+  );
+  const departureStartCheckpoint = useMemo(
+    () => resolveDepartureCheckpoint(persistedSelectedRoute, startCheckpointId),
+    [persistedSelectedRoute, startCheckpointId],
+  );
+  const departureStartCheckpointId = departureStartCheckpoint?.id ?? '';
   const relatedTrips = useMemo(() => board.trips
     .filter((trip) => (routeMatchesTab(trip.route_id, tab, direction) || (trip.route_candidate ? routeMatchesTab(trip.route_candidate, tab, direction) : false)) && (trip.status === 'active' || trip.status === 'arrived'))
     .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || new Date(b.departure_at).getTime() - new Date(a.departure_at).getTime()), [board.trips, tab, direction]);
@@ -270,6 +281,24 @@ export default function Tracker() {
     }
   }, [refreshBoard]);
 
+  const manualRefresh = async () => {
+    if (refreshingBoard) return;
+    if (!navigator.onLine) {
+      setMessage({ kind: 'warning', text: 'You are offline. Reconnect to refresh live routes and trip information.' });
+      return;
+    }
+    setRefreshingBoard(true);
+    try {
+      const [boardUpdated] = await Promise.all([refreshBoard(), refreshOtpStatus()]);
+      window.dispatchEvent(new Event('byahepanay:refresh'));
+      setMessage(boardUpdated
+        ? { kind: 'success', text: 'Live routes, checkpoint data, trip status, and community counts refreshed.' }
+        : { kind: 'error', text: 'The live board could not be refreshed. Check your connection and try again.' });
+    } finally {
+      setRefreshingBoard(false);
+    }
+  };
+
   const findMyStop = () => {
     if (!navigator.geolocation) {
       setLocationError('Location is not available in this browser. Choose your stop from the list instead.');
@@ -298,9 +327,12 @@ export default function Tracker() {
   };
 
   const recordDeparture = async () => {
-    const startCheckpoint = selectedRoute.checkpoints.find((point) => point.id === departureStartCheckpointId);
-    if (!startCheckpoint) {
-      setMessage({ kind: 'error', text: 'Choose the checkpoint where you first saw the bus.' });
+    const startCheckpoint = departureStartCheckpoint;
+    if (!board.configured || !startCheckpoint || !isPersistedCheckpointId(startCheckpoint.id)) {
+      setMessage({
+        kind: 'error',
+        text: 'We could not match that stop to the live route data. Tap Refresh, select Bolo (or your checkpoint) again, and retry.',
+      });
       return;
     }
     if (!navigator.geolocation) {
@@ -340,7 +372,10 @@ export default function Tracker() {
 
   const reportRoadside = () => {
     if (!activeTrip || activeTrip.status !== 'active') {
-      setStartCheckpointId(targetStop?.id ?? selectedRoute.checkpoints[0]?.id ?? '');
+      const defaultCheckpoint = targetStop && startableCheckpoints.some((point) => point.id === targetStop.id)
+        ? targetStop
+        : startableCheckpoints[0];
+      setStartCheckpointId(defaultCheckpoint?.id ?? '');
       setDepartureOpen(true);
       setMessage({ kind: 'info', text: 'No active bus is listed yet. You can be the first contributor: choose where you saw the bus and start its trip.' });
       return;
@@ -537,7 +572,8 @@ export default function Tracker() {
     const inbound = route.id.endsWith('_return');
     const baseId = route.id.replace(/_return$/, '');
     setDirection(inbound ? 'inbound' : 'outbound');
-    setStartCheckpointId(route.checkpoints[0]?.id ?? '');
+    const persistedRoute = board.routes.find((candidate) => candidate.id === routeId);
+    setStartCheckpointId(persistedRoute?.checkpoints[0]?.id ?? '');
     if (baseId === 'iloilo_passi') setTab('iloilo');
     else if (baseId === 'tapaz') setTab('tapaz');
     else if (baseId === 'estancia') setTab('estancia');
@@ -602,18 +638,7 @@ export default function Tracker() {
       </header>
 
       <div className="page-content" id="main-content">
-        <CommunityPresence />
-        <section className="card verification-card" aria-labelledby="email-verification-title">
-          <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="email-verification-title">Email verification</h2></div>{otpStatus.verified ? <span className="verified-pill">{otpStatus.verificationMethod === 'sms' ? '✓ Previously phone verified' : '✓ Email verified'}</span> : <span className="confidence unverified">Not verified</span>}</div>
-          {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.emailMasked}. A verified email helps keep the same reporter identity across browser sessions.</p> : <>
-            <p className="verification-copy">Verify access to your email inbox with a one-time code. We store a keyed email hash and masked address—not your full email address or OTP. {otpStatus.required ? 'Email verification is required before any contribution, including departures, sightings, Rider Beacon, and trip updates.' : 'Verification is currently optional while the administrator configures email delivery.'}</p>
-            {!otpStatus.configured ? <div className="notice info">Email OTP is ready in the app, but the administrator must configure Gmail SMTP (GMAIL_USER and GMAIL_APP_PASSWORD) before codes can be sent.</div> : <>
-              <form className="otp-form" onSubmit={requestEmailOtp}><div className="field"><label htmlFor="otp-email">Email address</label><input id="otp-email" type="email" inputMode="email" autoComplete="email" value={emailAddress} onChange={(event)=>setEmailAddress(event.target.value)} placeholder="you@example.com" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send email OTP'}</button></form>
-              {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyEmailOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,6))} inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit email code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length!==6}>{otpBusy?'Verifying…':'Verify email'}</button></form>}
-              <p className="verification-footnote">Codes expire after 10 minutes. Up to 4 delivery requests per hour and 5 verification attempts per 10 minutes.</p>
-            </>}
-          </>}
-        </section>
+        <div className="section-label route-section-label">Choose your route</div>
         <section className="corridor-wrap" id="corridors" aria-label="Choose travel corridor">
           <div className="variant-switch" aria-label="Travel direction">
             <button className={`variant-button ${direction === 'outbound' ? 'active' : ''}`} aria-pressed={direction === 'outbound'} onClick={() => { setDirection('outbound'); setWaitStopId(null); setMessage(null); }}>From Roxas City</button>
@@ -634,6 +659,7 @@ export default function Tracker() {
           </>}
         </section>
 
+        <div className="section-label">Next bus near you</div>
         <section className="card arrival-card" id="arrivals" aria-label="Next buses near your stop">
           <div className="arrival-card-head">
             <div>
@@ -797,12 +823,31 @@ export default function Tracker() {
           </div>)}
         </div> : <div className="card empty-trip"><p>Follow-up intervals are projections from the first checkpoint observation, not official operator dispatch times.</p></div>}
 
+        <div className="section-label">Community activity &amp; contributor access</div>
+        <CommunityPresence />
+        <section className="card verification-card" aria-labelledby="email-verification-title">
+          <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="email-verification-title">Email verification</h2></div>{otpStatus.verified ? <span className="verified-pill">{otpStatus.verificationMethod === 'sms' ? '✓ Previously phone verified' : '✓ Email verified'}</span> : <span className="confidence unverified">Not verified</span>}</div>
+          {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.emailMasked}. A verified email helps keep the same reporter identity across browser sessions.</p> : <>
+            <p className="verification-copy">Verify access to your email inbox with a one-time code. We store a keyed email hash and masked address—not your full email address or OTP. {otpStatus.required ? 'Email verification is required before any contribution, including departures, sightings, Rider Beacon, and trip updates.' : 'Verification is currently optional while the administrator configures email delivery.'}</p>
+            {!otpStatus.configured ? <div className="notice info">Email OTP is ready in the app, but the administrator must configure Gmail SMTP (GMAIL_USER and GMAIL_APP_PASSWORD) before codes can be sent.</div> : <>
+              <form className="otp-form" onSubmit={requestEmailOtp}><div className="field"><label htmlFor="otp-email">Email address</label><input id="otp-email" type="email" inputMode="email" autoComplete="email" value={emailAddress} onChange={(event)=>setEmailAddress(event.target.value)} placeholder="you@example.com" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send email OTP'}</button></form>
+              {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyEmailOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,6))} inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit email code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length!==6}>{otpBusy?'Verifying…':'Verify email'}</button></form>}
+              <p className="verification-footnote">Codes expire after 10 minutes. Up to 4 delivery requests per hour and 5 verification attempts per 10 minutes.</p>
+            </>}
+          </>}
+        </section>
         <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
 
       <nav className="bottom-bar" id="contribution" aria-label="Quick reporting actions">
         <div className="bottom-actions">
-          <button className="action-button" onClick={() => { setStartCheckpointId(targetStop?.id ?? selectedRoute.checkpoints[0]?.id ?? ''); setDepartureOpen(true); }} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Start tracking a bus from any mapped checkpoint">
+          <button className="action-button" onClick={() => {
+            const defaultCheckpoint = targetStop && startableCheckpoints.some((point) => point.id === targetStop.id)
+              ? targetStop
+              : startableCheckpoints[0];
+            setStartCheckpointId(defaultCheckpoint?.id ?? '');
+            setDepartureOpen(true);
+          }} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Start tracking a bus from any mapped checkpoint">
             <span className="action-icon" aria-hidden="true">🏁</span>
             <span className="action-label">Start trip</span>
             <span className="action-copy">Any checkpoint</span>
@@ -816,6 +861,11 @@ export default function Tracker() {
             <span className="action-icon" aria-hidden="true">🚌</span>
             <span className="action-label">Rider Beacon</span>
             <span className="action-copy">I’m on this bus</span>
+          </button>
+          <button className="action-button refresh" onClick={manualRefresh} disabled={refreshingBoard || !isOnline} aria-label="Refresh live tracker data">
+            <span className="action-icon" aria-hidden="true">↻</span>
+            <span className="action-label">{refreshingBoard ? 'Refreshing' : 'Refresh'}</span>
+            <span className="action-copy">Live data</span>
           </button>
         </div>
       </nav>
@@ -834,13 +884,13 @@ export default function Tracker() {
           </select></div>
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-checkpoint">Where did you first see this bus?</label><select id="departure-checkpoint" value={departureStartCheckpointId} onChange={(event) => setStartCheckpointId(event.target.value)} required>
             {startableCheckpoints.map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}
-          </select><p className="verification-footnote">Choose the mapped roadside stop where you are watching. GPS must be within 300 m to verify the start.</p></div>
+          </select><p className="verification-footnote">Choose the mapped roadside stop where you are watching. GPS must be within 300 m to verify the start.</p>{!board.configured && <p className="verification-footnote">Live checkpoint data is not ready. Tap Refresh before starting a trip.</p>}</div>
           <div className="field" style={{ marginBottom: 10 }}><label htmlFor="departure-type">Bus type</label><select id="departure-type" value={departureType} onChange={(event) => setDepartureType(event.target.value as BusType)}><option value="aircon">Aircon · Deluxe</option><option value="ordinary">Regular · Ordinary</option></select></div>
           <div className="form-grid">
             <div className="field"><label htmlFor="departure-body">Body number · optional</label><input id="departure-body" value={departureBody} onChange={(event) => setDepartureBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} /></div>
             <div className="field"><label htmlFor="departure-plate">Plate · optional</label><input id="departure-plate" value={departurePlate} onChange={(event) => setDeparturePlate(event.target.value)} placeholder="Plate number" maxLength={16} /></div>
           </div>
-          <div className="modal-actions"><button className="secondary-button" onClick={() => setDepartureOpen(false)} type="button">Cancel</button><button className="primary-button" onClick={recordDeparture} disabled={busy || !departureStartCheckpointId}>{busy ? 'Starting…' : 'Start trip here'}</button></div>
+          <div className="modal-actions"><button className="secondary-button" onClick={() => setDepartureOpen(false)} type="button">Cancel</button><button className="primary-button" onClick={recordDeparture} disabled={busy || !departureStartCheckpointId || !board.configured}>{busy ? 'Starting…' : 'Start trip here'}</button></div>
         </section>
       </div>}
 
