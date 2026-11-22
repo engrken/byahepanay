@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import nodemailer from 'nodemailer';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { jsonError, isSameOriginRequest } from '@/lib/http';
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
   if (!isSameOriginRequest(request)) return jsonError('Cross-origin requests are not allowed.', 403, 'CROSS_SITE_REQUEST');
   const spotterId = getSpotterSessionId(request);
   if (!spotterId) return jsonError('Secure browser session required.', 401, 'SESSION_REQUIRED');
-  if (!isEmailOtpConfigured()) return jsonError('Email OTP delivery is not configured yet. Add RESEND_API_KEY and EMAIL_FROM in Vercel.', 503, 'OTP_PROVIDER_NOT_CONFIGURED');
+  if (!isEmailOtpConfigured()) return jsonError('Gmail SMTP is not configured yet. Add GMAIL_USER and GMAIL_APP_PASSWORD in Vercel.', 503, 'OTP_PROVIDER_NOT_CONFIGURED');
 
   const sql = getDb();
   if (!sql) return jsonError('Reporting database is unavailable.', 503, 'DATABASE_UNAVAILABLE');
