@@ -62,6 +62,8 @@ export default function CommunityPresence() {
     const timer = window.setInterval(poll, REFRESH_INTERVAL_MS);
     document.addEventListener('visibilitychange', poll);
     window.addEventListener('focus', poll);
+    const handleManualRefresh = () => void refresh();
+    window.addEventListener('byahepanay:refresh', handleManualRefresh);
     const handleOnline = () => {
       updateConnection();
       void refresh();
@@ -74,6 +76,7 @@ export default function CommunityPresence() {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', poll);
       document.removeEventListener('focus', poll);
+      window.removeEventListener('byahepanay:refresh', handleManualRefresh);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', updateConnection);
     };
