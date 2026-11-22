@@ -5,7 +5,7 @@ import { ROUTES, routeForTab } from '@/lib/corridors';
 import { estimateTimeline, formatTime, projectCadence, arrivalWindowLabel } from '@/lib/eta';
 import { nearestCheckpoint, formatDistance } from '@/lib/geo';
 import { enqueueSighting, flushSightingQueue, getQueuedSightingCount, type QueuedSighting } from '@/lib/offline-queue';
-import type { BoardData, BusType, Checkpoint, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
+import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/lib/types';
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
 type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;

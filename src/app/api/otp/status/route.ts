@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSpotterSessionId } from '@/lib/spotter-session';
-import { getReporterIdentity, isPhoneVerificationRequired, isTwilioVerifyConfigured } from '@/lib/reporter-verification';
+import { isPhoneVerificationRequired, isTwilioVerifyConfigured } from '@/lib/reporter-verification';
 export const dynamic='force-dynamic';
 export async function GET(request:NextRequest){
   const spotterId=getSpotterSessionId(request);
