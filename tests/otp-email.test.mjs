@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  createEmailOtpCode, hashEmailAddress, hashEmailOtp, maskEmailAddress, normalizeEmailAddress,
+  createEmailOtpCode, hashEmailAddress, hashEmailOtp, isEmailOtpConfigured, maskEmailAddress, normalizeEmailAddress,
 } from '../src/lib/reporter-verification.ts';
 
 const SECRET = 'unit-test-secret-with-at-least-thirty-two-characters';
