@@ -1,5 +1,5 @@
 import type { NeonSql } from './db';
-import { hashEmailAddress, normalizeEmailAddress } from './reporter-verification';
+import { hashEmailAddress, normalizeEmailAddress } from './reporter-verification.ts';
 
 /**
  * Returns the keyed hash for the configured developer-admin email.
