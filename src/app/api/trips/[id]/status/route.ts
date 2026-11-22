@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/http';
 import { getSpotterSessionId } from '@/lib/spotter-session';
+import { requireReporterIdentity } from '@/lib/reporter-verification';
 
 export const dynamic = 'force-dynamic';
 const ALLOWED = ['seats_available', 'standing_only', 'stopped_cargo_traffic_10m', 'mechanical_breakdown', 'moving'];
@@ -12,6 +13,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (!spotterId) return jsonError('Secure browser session is missing or expired. Refresh the app and try again.', 401, 'SESSION_REQUIRED');
   const sql = getDb();
   if (!sql) return adminUnavailable();
+  const reporter = await requireReporterIdentity(sql, spotterId);
+  if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before posting a passenger status.', 428, 'EMAIL_VERIFICATION_REQUIRED');
   const { id } = await context.params;
   if (!isUuid(id)) return jsonError('Invalid trip identifier.');
   let body: { status?: string };

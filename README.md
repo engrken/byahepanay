@@ -1,6 +1,6 @@
-# BiyahePanay — Ceres Liner Last-Trip Tracker
+# BiyahePanay — Bus Tracking & Passenger Information
 
-Mobile-first Next.js PWA for community checkpoint reports and estimated Ceres Liner arrivals across Capiz, Iloilo, and Aklan. It is not an official Ceres Liner schedule or operator service.
+Mobile-first Next.js PWA for community checkpoint reports and estimated bus arrivals across Capiz, Iloilo, and Aklan. BiyahePanay is independent and community-powered; it is not an official transport operator timetable or service.
 
 ## Stack
 
@@ -102,7 +102,7 @@ Choose a corridor, then use **Use my location** or select a waiting stop. The ap
 **Important:** route timing offsets and GPS points are initial planning estimates. They are not operator-verified and must not be presented as live schedule guarantees. Browser GPS/background sync are best-effort, and anonymous crowdsourcing requires abuse monitoring before high-volume public launch.
 
 ## Email OTP and reporter integrity
-Email verification is delivered through Gmail SMTP using Nodemailer. Configure `GMAIL_USER` (the full Gmail or Google Workspace address) and `GMAIL_APP_PASSWORD` (a Google App Password; never use the normal account password) in Vercel. Gmail App Passwords require 2-Step Verification, and some managed/work/school accounts or Advanced Protection configurations may not offer them. The app connects to `smtp.gmail.com:465` with implicit TLS and sends from the authenticated Gmail address. Test delivery before setting `REQUIRE_EMAIL_VERIFICATION=true`. Until the Gmail credentials are configured, OTP remains unavailable and email verification remains optional. The app stores a keyed email hash and masked address, never the full email address or OTP code. Codes expire after 10 minutes; delivery is limited to four requests per hour per session and per email, with five verification attempts per 10 minutes per session and email. One verified email maps to one reporter identity across browser profiles.
+Email verification is delivered through Gmail SMTP using Nodemailer. Configure `GMAIL_USER` (the full Gmail or Google Workspace address) and `GMAIL_APP_PASSWORD` (a Google App Password; never use the normal account password) in Vercel. Gmail App Passwords require 2-Step Verification, and some managed/work/school accounts or Advanced Protection configurations may not offer them. The app connects to `smtp.gmail.com:465` with implicit TLS and sends from the authenticated Gmail address. Production always requires a successful email OTP before contribution writes; the server fails closed in production even if `REQUIRE_EMAIL_VERIFICATION` is missing or set to `false`. Keep `REQUIRE_EMAIL_VERIFICATION=true` explicitly configured in Vercel Production and Preview. If SMTP is unavailable, contribution writes remain blocked instead of falling back to anonymous access. The app stores a keyed email hash and masked address, never the full email address or OTP code. Codes expire after 10 minutes; delivery is limited to four requests per hour per session and per email, with five verification attempts per 10 minutes per session and email. One verified email maps to one reporter identity across browser profiles.
 
 ## Automatic ETA calibration
 Each checkpoint segment is calibrated separately by route and bus type. A sample is accepted only after at least two distinct email-verified reporter identities corroborate a checkpoint, both reports have GPS accuracy recorded, mean accuracy is at most 40 m, the route sequence is adjacent, and elapsed time is plausible. Calibrations use a rolling 90-day window, require eight quality-qualified samples, and use a median with median-absolute-deviation outlier rejection. The 80th percentile is retained for uncertainty reporting. Until a segment qualifies, the initial planning offset remains in use.
@@ -110,7 +110,7 @@ Each checkpoint segment is calibrated separately by route and bus type. A sample
 ## Operational monitoring and research metrics
 `/api/health` is the health probe. `/api/ops/metrics?days=30` returns aggregate daily report-quality and ETA calibration metrics; `/ops` is the visual dashboard. A Vercel Cron job calls `/api/ops/snapshot` once daily at midnight Manila time using `CRON_SECRET` and records the previous completed Manila calendar day, stores historical aggregates, and opens/resolves alerts for slow database queries and stale active trips. No raw email addresses, phone numbers, or per-reporter identities are exposed in the dashboard.
 
-Calibration values are research estimates, not official schedules. Field-validate checkpoint coordinates and timestamps with Vallacar/Ceres permission before operational reliance.
+Calibration values are research estimates, not official timetables. Field-validate checkpoint coordinates and timestamps with transport operators and local field checks before operational reliance.
 
 
 ### Rebrand compatibility

@@ -355,7 +355,7 @@ export default function Tracker() {
 
   const lookupBus = async () => {
     if (!tagBody.trim()) {
-      setMessage({ kind: 'info', text: 'Enter a Ceres body number to look up.' });
+      setMessage({ kind: 'info', text: 'Enter a bus number to look up.' });
       return;
     }
     try {
@@ -540,7 +540,7 @@ export default function Tracker() {
             </div>
           </div>
           <h1 className="header-title">Catch the last trip.<br />Not the guesswork.</h1>
-          <p className="header-subtitle">Crowd-verified Ceres Liner sightings across Capiz, Iloilo, and Aklan.</p>
+          <p className="header-subtitle">Community-verified bus sightings across Capiz, Iloilo, and Aklan.</p>
           <div className="header-meta">
             <div className="origin-pill">📍 Pueblo de Panay Terminal · Roxas City</div>
             <div className={`connection-pill ${isOnline ? 'connected' : 'disconnected'}`} role="status" aria-live="polite">
@@ -555,7 +555,7 @@ export default function Tracker() {
         <section className="card verification-card" aria-labelledby="email-verification-title">
           <div className="verification-top"><div><div className="arrival-kicker">REPORTER TRUST</div><h2 id="email-verification-title">Email verification</h2></div>{otpStatus.verified ? <span className="verified-pill">{otpStatus.verificationMethod === 'sms' ? '✓ Previously phone verified' : '✓ Email verified'}</span> : <span className="confidence unverified">Not verified</span>}</div>
           {otpStatus.verified ? <p className="verification-copy">This browser is linked to {otpStatus.emailMasked}. A verified email helps keep the same reporter identity across browser sessions.</p> : <>
-            <p className="verification-copy">Verify access to your email inbox with a one-time code. We store a keyed email hash and masked address—not your full email address or OTP. {otpStatus.required ? 'Verification is required for departures and sightings.' : 'Verification is currently optional while the administrator configures email delivery.'}</p>
+            <p className="verification-copy">Verify access to your email inbox with a one-time code. We store a keyed email hash and masked address—not your full email address or OTP. {otpStatus.required ? 'Email verification is required before any contribution, including departures, sightings, Rider Beacon, and trip updates.' : 'Verification is currently optional while the administrator configures email delivery.'}</p>
             {!otpStatus.configured ? <div className="notice info">Email OTP is ready in the app, but the administrator must configure Gmail SMTP (GMAIL_USER and GMAIL_APP_PASSWORD) before codes can be sent.</div> : <>
               <form className="otp-form" onSubmit={requestEmailOtp}><div className="field"><label htmlFor="otp-email">Email address</label><input id="otp-email" type="email" inputMode="email" autoComplete="email" value={emailAddress} onChange={(event)=>setEmailAddress(event.target.value)} placeholder="you@example.com" required /></div><button className="secondary-button" type="submit" disabled={otpBusy}>{otpBusy?'Sending…':'Send email OTP'}</button></form>
               {otpSent && <form className="otp-form verify-code-form" onSubmit={verifyEmailOtp}><div className="field"><label htmlFor="otp-code">Verification code</label><input id="otp-code" value={otpCode} onChange={(event)=>setOtpCode(event.target.value.replace(/\D/g,'').slice(0,6))} inputMode="numeric" autoComplete="one-time-code" placeholder="Six-digit email code" required /></div><button className="primary-button" type="submit" disabled={otpBusy||otpCode.length!==6}>{otpBusy?'Verifying…':'Verify email'}</button></form>}
@@ -666,7 +666,7 @@ export default function Tracker() {
             {activeTrip.status === 'active' && <details className="details-box">
               <summary>🪪 Bus Registry Lookup / Tag</summary>
               <form className="form-grid" onSubmit={saveBusTag}>
-                <div className="field"><label htmlFor="tag-body">Ceres body number</label><input id="tag-body" value={tagBody} onChange={(event) => setTagBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} required /></div>
+                <div className="field"><label htmlFor="tag-body">Bus number</label><input id="tag-body" value={tagBody} onChange={(event) => setTagBody(event.target.value)} placeholder="e.g. 5412" maxLength={20} required /></div>
                 <div className="field"><label htmlFor="tag-plate">Plate number</label><input id="tag-plate" value={tagPlate} onChange={(event) => setTagPlate(event.target.value)} placeholder="Optional" maxLength={16} /></div>
                 <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}><button className="secondary-button" type="button" onClick={lookupBus} disabled={busy}>Lookup body number</button><button className="primary-button" type="submit" disabled={busy}>Attach bus tag</button></div>
               </form>
@@ -710,7 +710,7 @@ export default function Tracker() {
           </div>)}
         </div> : <div className="card empty-trip"><p>Projected slots appear after an actual departure is logged as the cadence anchor. These are projections, not confirmed operator dispatches.</p></div>}
 
-        <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official Ceres Liner schedules. Coordinates must be field-checked before public operational use.</p>
+        <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
 
       <nav className="bottom-bar" aria-label="Quick reporting actions">

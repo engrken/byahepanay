@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
   const bodyNumber = body.bodyNumber?.trim() || null;
   const plateNumber = body.plateNumber?.trim() || null;
-  if (bodyNumber && bodyNumber.length > 20) return jsonError('Ceres body number must be 20 characters or fewer.');
+  if (bodyNumber && bodyNumber.length > 20) return jsonError('Bus number must be 20 characters or fewer.');
   if (plateNumber && plateNumber.length > 16) return jsonError('Plate number must be 16 characters or fewer.');
   if (!isUuid(body.requestId)) return jsonError('A unique request identifier is required.');
   if (typeof body.lat !== 'number' || typeof body.lng !== 'number' ||
