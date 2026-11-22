@@ -4,6 +4,7 @@ import { adminUnavailable, jsonError, isUuid, isSameOriginRequest } from '@/lib/
 import { getSpotterSessionId } from '@/lib/spotter-session';
 import { requireReporterIdentity } from '@/lib/reporter-verification';
 import { haversineKm } from '@/lib/geo';
+import { findCheckpointLandmark, LANDMARK_ENABLED_ROUTE_IDS } from '@/lib/checkpoint-landmarks';
 
 export const dynamic = 'force-dynamic';
 const VALID_ROUTES = ['iloilo_passi', 'kalibo_mambusao', 'kalibo_sapian', 'tapaz', 'estancia', 'iloilo_passi_return', 'kalibo_mambusao_return', 'kalibo_sapian_return', 'tapaz_return', 'estancia_return'];
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
   if (!reporter.allowed) return jsonError('Verify your email address with an email OTP before starting a trip.', 428, 'EMAIL_VERIFICATION_REQUIRED');
 
   let body: {
-    routeId?: string; checkpointId?: string; busType?: string; requestId?: string; bodyNumber?: string;
+    routeId?: string; checkpointId?: string; landmarkId?: string; busType?: string; requestId?: string; bodyNumber?: string;
     plateNumber?: string; lat?: number; lng?: number;
   };
   try { body = await request.json(); } catch { return jsonError('Invalid JSON request body.'); }
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
   try {
     const [routeRows, checkpointRows] = await Promise.all([
       sql`select id from public.routes where id = ${routeId} and is_active = true limit 1`,
-      sql`select c.id, c.name, c.lat, c.lng, rc.sequence,
+      sql`select c.id, c.code, c.name, c.lat, c.lng, rc.sequence,
                  (select max(last.sequence) from public.route_checkpoints last where last.route_id = rc.route_id) as max_sequence
           from public.checkpoints c
           join public.route_checkpoints rc on rc.checkpoint_id = c.id
@@ -58,13 +59,21 @@ export async function POST(request: NextRequest) {
     if (!routeRows.length) return jsonError('This corridor is not available. Refresh the route list and try again.', 422);
     if (!checkpointRows.length) return jsonError('That checkpoint is not part of the selected corridor.', 422, 'CHECKPOINT_ROUTE_MISMATCH');
 
-    const origin = checkpointRows[0] as { id: string; name: string; lat: number; lng: number; sequence: number; max_sequence: number };
+    const origin = checkpointRows[0] as { id: string; code: string; name: string; lat: number; lng: number; sequence: number; max_sequence: number };
+    const selectedLandmark = body.landmarkId ? findCheckpointLandmark(body.landmarkId) : null;
+    if (body.landmarkId && (
+      !LANDMARK_ENABLED_ROUTE_IDS.includes(routeId as typeof LANDMARK_ENABLED_ROUTE_IDS[number]) ||
+      !selectedLandmark || selectedLandmark.checkpointCode !== origin.code
+    )) {
+      return jsonError('The selected landmark does not belong to this checkpoint or supported corridor.', 422, 'LANDMARK_CHECKPOINT_MISMATCH');
+    }
     if (Number(origin.sequence) >= Number(origin.max_sequence)) return jsonError('Choose a checkpoint before the destination terminal; this route has no further stops after that point.', 422, 'START_AT_DESTINATION');
-    const originDistance = haversineKm({ lat: body.lat, lng: body.lng }, { lat: origin.lat, lng: origin.lng }) * 1000;
+    const geofenceTarget = selectedLandmark ?? origin;
+    const originDistance = haversineKm({ lat: body.lat, lng: body.lng }, { lat: geofenceTarget.lat, lng: geofenceTarget.lng }) * 1000;
     const allowLocalGeofenceBypass = process.env.NODE_ENV !== 'production' && process.env.BYPASS_GEOFENCE === 'true';
     if (!allowLocalGeofenceBypass && originDistance > 300) {
       return jsonError(
-        `You are ${Math.round(originDistance)} m from ${origin.name}. Start reports must be within 300 m of the selected checkpoint.`,
+        `You are ${Math.round(originDistance)} m from ${geofenceTarget.name}. Start reports must be within 300 m of the selected checkpoint.`,
         422, 'DEPARTURE_OUTSIDE_GEOFENCE',
       );
     }
