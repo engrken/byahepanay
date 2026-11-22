@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
         to: email,
         subject: 'Your BiyahePanay verification code',
         text: `Your BiyahePanay verification code is ${code}. It expires in 10 minutes. If you did not request this code, you can ignore this email.`,
-        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:24px auto;padding:24px;border:1px solid #e5e7eb;border-radius:14px;color:#172b3a"><p style="font-size:12px;letter-spacing:1.5px;font-weight:700;color:#64748b">BYAHEPANAY · REPORTER VERIFICATION</p><h1 style="font-size:22px;margin:12px 0">Your verification code</h1><p>Enter this one-time code in the BiyahePanay app:</p><p style="font-size:32px;letter-spacing:8px;font-weight:700;padding:14px 0">${code}</p><p style="color:#64748b">This code expires in 10 minutes. If you did not request it, you can ignore this email.</p></div>`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:24px auto;padding:24px;border:1px solid #e5e7eb;border-radius:14px;color:#172b3a"><p style="font-size:12px;letter-spacing:1.5px;font-weight:700;color:#64748b">BIYAHEPANAY · REPORTER VERIFICATION</p><h1 style="font-size:22px;margin:12px 0">Your verification code</h1><p>Enter this one-time code in the BiyahePanay app:</p><p style="font-size:32px;letter-spacing:8px;font-weight:700;padding:14px 0">${code}</p><p style="color:#64748b">This code expires in 10 minutes. If you did not request it, you can ignore this email.</p></div>`,
       });
       await sql`update public.email_verification_events set provider_status = 'sent' where id = ${eventId}::uuid`;
       return NextResponse.json({

@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const raw = Number(request.nextUrl.searchParams.get('days') ?? 30);
     const days = Number.isFinite(raw) ? Math.min(90, Math.max(7, Math.floor(raw))) : 30;
-    const [daily, calibrations, alerts, health, summary] = await Promise.all([
+    const [daily, calibrations, alerts, health, summary, activeTrips] = await Promise.all([
       sql`select metric_date,report_count,verified_report_count,otp_verified_report_count,unique_verified_reporters,median_gps_accuracy_m,median_report_distance_m,calibration_sample_count,calibrated_segment_count,average_quality_score
         from public.report_quality_daily
         where metric_date >= (now() at time zone 'Asia/Manila')::date - ${days}::int + 1
@@ -56,6 +56,16 @@ export async function GET(request: NextRequest) {
              where updated_at > now() - interval '90 days') calibrated_segments
         from public.report_quality_daily
         where metric_date >= (now() at time zone 'Asia/Manila')::date - ${days}::int + 1`,
+      sql`select t.id,t.route_id,r.short_name,t.bus_type,t.departure_at,
+          coalesce(t.last_checkpoint_at,t.departure_at) as last_checkpoint_at,
+          c.name as last_checkpoint_name,t.rider_status,t.rider_status_at,b.body_number
+        from public.trips t
+        join public.routes r on r.id=t.route_id
+        left join public.checkpoints c on c.id=t.last_checkpoint_id
+        left join public.buses b on b.id=t.bus_id
+        where t.status='active'
+        order by coalesce(t.last_checkpoint_at,t.departure_at) asc
+        limit 50`,
     ]);
 
     return NextResponse.json({
@@ -65,6 +75,7 @@ export async function GET(request: NextRequest) {
       calibrations,
       alerts,
       latestHealth: health[0] ?? null,
+      activeTrips,
       calibrationPolicy: {
         minimumSamples: 8,
         minimumQualityScore: 70,

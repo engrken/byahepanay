@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSpotterSessionId } from '@/lib/spotter-session';
 import { isEmailOtpConfigured, isEmailVerificationRequired } from '@/lib/reporter-verification';
+import { isDeveloperAdmin } from '@/lib/admin-verification';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
   if (!sql) {
     return NextResponse.json({
       configured: isEmailOtpConfigured(), required: isEmailVerificationRequired(), verified: false,
-      emailMasked: null, verificationMethod: null,
+      isDeveloperAdmin: false, emailMasked: null, verificationMethod: null,
     }, { headers: { 'Cache-Control': 'no-store' } });
   }
 
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
       verified: Boolean(identity),
       emailMasked: identity?.email_masked ?? null,
       verificationMethod: identity?.verification_method ?? null,
+      isDeveloperAdmin: await isDeveloperAdmin(sql, spotterId),
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('Email OTP status query failed', error);

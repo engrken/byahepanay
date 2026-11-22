@@ -9,7 +9,7 @@ import type { BoardData, BusType, CorridorTab, RouteDefinition, Trip } from '@/l
 
 const EMPTY_BOARD: BoardData = { configured: false, routes: ROUTES, trips: [] };
 type UiMessage = { kind: 'info' | 'success' | 'error' | 'warning'; text: string } | null;
-type EmailOtpState = { configured: boolean; required: boolean; verified: boolean; emailMasked: string | null; verificationMethod: 'email' | 'sms' | null };
+type EmailOtpState = { configured: boolean; required: boolean; verified: boolean; isDeveloperAdmin: boolean; emailMasked: string | null; verificationMethod: 'email' | 'sms' | null };
 
 async function ensureSpotterSession() {
   const response = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
@@ -51,7 +51,7 @@ export default function Tracker() {
   const [waitStopId, setWaitStopId] = useState<string | null>(null);
   const [message, setMessage] = useState<UiMessage>(null);
   const [queuedCount, setQueuedCount] = useState(0);
-  const [otpStatus, setOtpStatus] = useState<EmailOtpState>({ configured: false, required: false, verified: false, emailMasked: null, verificationMethod: null });
+  const [otpStatus, setOtpStatus] = useState<EmailOtpState>({ configured: false, required: false, verified: false, isDeveloperAdmin: false, emailMasked: null, verificationMethod: null });
   const [emailAddress, setEmailAddress] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
@@ -509,13 +509,15 @@ export default function Tracker() {
     setMessage(null);
   };
 
-  const waitingGuidance = waitItem?.state === 'passed'
-    ? 'This trip has already passed your selected stop.'
-    : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway <= 12
-      ? 'Walk to the highway now.'
-      : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway >= 20
-        ? 'Safe to wait at home for now.'
-        : 'Get ready and keep your phone nearby.';
+  const waitingGuidance = waitItem?.state === 'stale'
+    ? 'Tracking is no longer fresh. Wait for a new verified checkpoint report.'
+    : waitItem?.state === 'passed'
+      ? 'This trip has already passed your selected stop.'
+      : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway <= 12
+        ? 'Walk to the highway now.'
+        : waitItem?.minutesAway !== null && waitItem?.minutesAway !== undefined && waitItem.minutesAway >= 20
+          ? 'Safe to wait at home for now.'
+          : 'Get ready and keep your phone nearby.';
 
   return (
     <main className="app-shell">
@@ -548,6 +550,15 @@ export default function Tracker() {
               {isOnline ? 'Connection available' : 'Offline · reports saved on this device'}
             </div>
           </div>
+          <nav className="site-menu" aria-label="Main menu">
+            <span className="site-menu-label">Menu</span>
+            <a href="#corridors">Routes</a>
+            <a href="#arrivals">Arrivals</a>
+            <a href="#active-trip">Current trip</a>
+            <a href="#checkpoint-timeline">Checkpoints</a>
+            <a href="#contribution">Contribute</a>
+            {otpStatus.isDeveloperAdmin && <a className="site-menu-admin" href="/ops">Operations &amp; analytics</a>}
+          </nav>
         </div>
       </header>
 
@@ -563,7 +574,7 @@ export default function Tracker() {
             </>}
           </>}
         </section>
-        <section className="corridor-wrap" aria-label="Choose travel corridor">
+        <section className="corridor-wrap" id="corridors" aria-label="Choose travel corridor">
           <div className="corridor-tabs">
             <button className={`corridor-tab ${tab === 'iloilo' ? 'active' : ''}`} onClick={() => selectedTab('iloilo')}>Iloilo<br />(Passi)</button>
             <button className={`corridor-tab ${tab === 'kalibo' ? 'active' : ''}`} onClick={() => selectedTab('kalibo')}>Kalibo</button>
@@ -575,12 +586,6 @@ export default function Tracker() {
             <button className={`variant-button ${kaliboVia === 'sapian' ? 'active' : ''}`} onClick={() => { setKaliboVia('sapian'); setWaitStopId(null); }}>Via Sapian</button>
           </div>}
         </section>
-
-        <nav className="section-jump-nav" aria-label="Tracker sections">
-          <a href="#arrivals">Arrivals</a>
-          <a href="#active-trip">Current trip</a>
-          <a href="#checkpoint-timeline">Checkpoints</a>
-        </nav>
 
         <section className="card arrival-card" id="arrivals" aria-label="Next buses near your stop">
           <div className="arrival-card-head">
@@ -658,10 +663,24 @@ export default function Tracker() {
               <div><div className="stat-label">Checkpoint time</div><div className="stat-value">{formatTime(activeTrip.last_checkpoint_at)}</div></div>
             </div>
             <div className="destination-window">
-              <div><span>{activeTrip.status === 'arrived' ? `Arrived · ${activeRoute.destination}` : `Safe arrival window · ${activeRoute.destination}`}</span><strong>{activeTrip.status === 'arrived' ? formatTime(activeTrip.last_checkpoint_at) : arrivalWindowLabel(timeline?.arrivalWindow ?? null)}</strong></div>
+              <div>
+                <span>{activeTrip.status === 'arrived'
+                  ? `Arrived · ${activeRoute.destination}`
+                  : timeline?.trackingLost ? `Tracking status · ${activeRoute.destination}` : `Estimated arrival · ${activeRoute.destination}`}</span>
+                <strong>{activeTrip.status === 'arrived'
+                  ? formatTime(activeTrip.last_checkpoint_at)
+                  : timeline?.trackingLost ? 'ETA paused' : arrivalWindowLabel(timeline?.arrivalWindow ?? null)}</strong>
+              </div>
               <div aria-hidden="true" style={{ fontSize: 23 }}>🏁</div>
             </div>
-            {timeline && timeline.delayMinutes >= 1 && timeline.nextCheckpoint && <div className="notice">⚠️ Delayed +{timeline.delayMinutes} mins — awaiting {timeline.nextCheckpoint.name} checkpoint confirmation.</div>}
+{timeline?.trackingLost && activeTrip.status === 'active' && <div className="notice tracking-lost" role="status">
+              <strong>Tracking lost · ETA paused.</strong> No verified checkpoint confirmation for {timeline.minutesSinceCheckpoint} minutes.
+              Last confirmed at {activeRoute.checkpoints.find((point) => point.id === activeTrip.last_checkpoint_id)?.name ?? 'Pueblo Terminal'}.
+              This does not mean the bus arrived or was cancelled.
+            </div>}
+            {timeline?.confirmationOverdue && !timeline.trackingLost && timeline.nextCheckpoint && <div className="notice tracking-overdue" role="status">
+              Awaiting a verified {timeline.nextCheckpoint.name} checkpoint confirmation. The expected check-in is overdue by {timeline.delayMinutes} minutes; this is not proof of a traffic delay.
+            </div>}
             {activeTrip.route_candidate && !activeTrip.route_locked && <div className="notice info">Route is provisional after Mambusao. Waiting for Jamindan/Tapaz or Kalibo-side confirmation.</div>}
             {activeTrip.status === 'active' && <details className="details-box">
               <summary>🪪 Bus Registry Lookup / Tag</summary>
@@ -680,17 +699,31 @@ export default function Tracker() {
         <div className="section-label">Checkpoint timeline</div>
         <section className="card timeline-card" id="checkpoint-timeline">
           {(timeline?.items ?? activeRoute.checkpoints.map((checkpoint) => ({ checkpoint, state: 'upcoming' as const, eta: null, minutesAway: null }))).map((item) => {
-            const stateText = item.state === 'passed' ? 'Passed' : item.state === 'pending' ? '1 report · awaiting confirmation' : item.state === 'approaching' ? 'Approaching' : 'Upcoming';
-            const dotText = item.state === 'passed' ? '✓' : item.state === 'pending' ? '!' : item.state === 'approaching' ? '🚌' : '·';
+            const stateText = item.state === 'passed'
+              ? 'Passed'
+              : item.state === 'pending'
+                ? '1 report · awaiting confirmation'
+                : item.state === 'stale'
+                  ? 'No fresh confirmation · ETA paused'
+                  : item.state === 'approaching' ? 'Approaching' : 'Upcoming';
+            const dotText = item.state === 'passed'
+              ? '✓'
+              : item.state === 'pending' ? '!'
+                : item.state === 'stale' ? '—'
+                  : item.state === 'approaching' ? '🚌' : '·';
             return <div className="timeline-row" key={item.checkpoint.id}>
               <div className="timeline-track"><span className={`timeline-dot ${item.state}`}>{dotText}</span></div>
               <button className={`wait-button ${waitStopId === item.checkpoint.id ? 'selected' : ''}`} onClick={() => setWaitStopId(item.checkpoint.id)}>
-                <div className={`checkpoint-name ${item.state === 'upcoming' ? 'dim' : ''}`}>{item.checkpoint.name}</div>
+                <div className={`checkpoint-name ${item.state === 'upcoming' || item.state === 'stale' ? 'dim' : ''}`}>{item.checkpoint.name}</div>
                 <div className="checkpoint-status">{stateText}</div>
               </button>
               <div className="checkpoint-eta">
                 <strong>{item.state === 'passed' ? '✓' : item.state === 'pending' ? 'Pending' : item.eta ? formatTime(item.eta) : '—'}</strong>
-                <span>{item.state === 'passed' ? 'Confirmed' : item.minutesAway !== null ? `${item.minutesAway} min` : item.state === 'pending' ? 'Unverified' : 'ETA pending'}</span>
+                <span>{item.state === 'passed'
+                  ? 'Confirmed'
+                  : item.state === 'stale' ? 'Waiting for new report'
+                    : item.minutesAway !== null ? `${item.minutesAway} min`
+                      : item.state === 'pending' ? 'Unverified' : 'ETA pending'}</span>
               </div>
             </div>;
           })}
@@ -713,7 +746,7 @@ export default function Tracker() {
         <p className="footer-note">ETAs are estimates from community sightings and the planning offsets in this prototype. They are not official transport operator timetables. Coordinates must be field-checked before public operational use.</p>
       </div>
 
-      <nav className="bottom-bar" aria-label="Quick reporting actions">
+      <nav className="bottom-bar" id="contribution" aria-label="Quick reporting actions">
         <div className="bottom-actions">
           <button className="action-button" onClick={() => setDepartureOpen(true)} disabled={busy || (otpStatus.required && !otpStatus.verified)} aria-label="Log a bus departure from Pueblo">
             <span className="action-icon" aria-hidden="true">🏁</span>
