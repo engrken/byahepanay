@@ -6,7 +6,7 @@ export type NeonSql = ((strings: TemplateStringsArray, ...values: unknown[]) => 
 let cachedSql: NeonSql | null = null;
 /** Server-only Neon connection. Uses the Marketplace pooled URL for request-time queries. */
 export function getDb(): NeonSql | null {
-  const connectionString = process.env.BYAHEPANAY_DATABASE_URL || process.env.DATABASE_URL;
+  const connectionString = process.env.BIYAHEPANAY_DATABASE_URL || process.env.BYAHEPANAY_DATABASE_URL || process.env.DATABASE_URL;
   if (!connectionString) return null;
   if (!cachedSql) cachedSql = neon(connectionString) as unknown as NeonSql;
   return cachedSql;

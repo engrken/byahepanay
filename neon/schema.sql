@@ -1,4 +1,4 @@
--- ByahePanay PostgreSQL schema for Neon.
+-- BiyahePanay PostgreSQL schema for Neon.
 -- Planning coordinates and ETA offsets are approximate prototype anchors; field-check before public use.
 create extension if not exists pgcrypto;
 

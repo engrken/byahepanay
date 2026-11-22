@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     `;
     return NextResponse.json({ joined: true });
   } catch (error) {
-    console.error('ByahePanay rider join failed', error);
+    console.error('BiyahePanay rider join failed', error);
     return jsonError('Could not join Rider Beacon mode.', 500);
   }
 }

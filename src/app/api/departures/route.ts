@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ trip: { ...trip, body_number: bodyNumber, plate_number: plateNumber } }, { status: 201 });
   } catch (error) {
-    console.error('ByahePanay departure creation failed', error);
+    console.error('BiyahePanay departure creation failed', error);
     return jsonError('Could not record departure. Please try again.', 500);
   }
 }

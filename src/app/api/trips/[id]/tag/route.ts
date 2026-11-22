@@ -49,7 +49,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (!tagged.length) return jsonError('Active trip not found.', 404);
     return NextResponse.json({ bus });
   } catch (error) {
-    console.error('ByahePanay trip tag failed', error);
+    console.error('BiyahePanay trip tag failed', error);
     return jsonError('Unable to save bus tag.', 500);
   }
 }

@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "ByahePanay — Ceres Liner Last-Trip Tracker",
-  "short_name": "ByahePanay",
+  "name": "BiyahePanay — Ceres Liner Last-Trip Tracker",
+  "short_name": "BiyahePanay",
   "description": "Live community checkpoint sightings and last-trip estimates for Panay commuters.",
   "start_url": "/",
   "scope": "/",
