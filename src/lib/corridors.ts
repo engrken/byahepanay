@@ -111,8 +111,8 @@ function reverseRoute(route: RouteDefinition): RouteDefinition {
       eta_offset_minutes: elapsed,
       segment_minutes: segment,
       // Outbound calibration samples must not be reused in the opposite direction.
-      calibrated_segment_minutes: undefined,
-      calibration_sample_count: undefined,
+      calibrated_segment_minutes: {},
+      calibration_sample_count: {},
     };
   });
   const label = RETURN_LABELS[route.id];
