@@ -28,5 +28,12 @@
       "path": "/api/ops/snapshot",
       "schedule": "0 16 * * *"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "**": false,
+      "main": true,
+      "preview": true
+    }
+  }
 }
